@@ -15,7 +15,7 @@
 
 > ⚠️ **Disclaimer**: This project is based on reverse engineering of Antigravity. Future compatibility is not guaranteed. Use at your own risk. Not officially supported.
 
-> ⚠️ **Limitation**: Anti-API supports **chat only**. Claude Code's tool use (file operations, command execution) is **NOT supported** because Antigravity does not return tool_use format responses.
+> 🔧 **Known Issue**: Claude Code's tool use (file/command operations) is currently not working due to Antigravity's response format. **We are actively investigating this issue and expect a fix soon.** Chat functionality works perfectly.
 
 ## Features
 
@@ -142,7 +142,7 @@ MIT
 
 > ⚠️ **免责声明**：本项目基于 Antigravity 最新版本逆向开发，未来新版本的可用性未知。未受官方支持，使用风险自负。
 
-> ⚠️ **限制说明**：Anti-API 仅支持**纯对话模式**。Claude Code 的工具调用（文件操作、命令执行）**不支持**，因为 Antigravity 不返回 tool_use 格式的响应。
+> 🔧 **已知问题**：Claude Code 的工具调用（文件/命令操作）目前因 Antigravity 响应格式问题暂不可用。**正在积极研究中，预计很快修复。** 纯对话功能完全正常。
 
 ## 特性
 
