@@ -20,6 +20,7 @@ interface ModelQuota {
 
 interface QuotaSnapshot {
     timestamp: Date
+    userEmail?: string
     promptCredits?: {
         available: number
         monthly: number
@@ -142,6 +143,7 @@ export async function getUserStatus(): Promise<QuotaSnapshot | null> {
 
         const snapshot: QuotaSnapshot = {
             timestamp: new Date(),
+            userEmail: state.userEmail || undefined,
             promptCredits,
             models,
             planName: planStatus?.planInfo?.planName,

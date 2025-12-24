@@ -373,10 +373,21 @@
                     return;
                 }
 
-                // Update plan info
-                const planText = data.planName ? `Plan: ${data.planName}` : 'Quota Information';
+                // Update plan info with email
+                const email = data.userEmail || 'Unknown';
+                const planText = data.planName ? `${data.planName} Plan` : 'Quota';
                 document.getElementById('plan-info').innerHTML =
-                    `<span class="text-gray-300">${planText}</span> <span class="text-gray-600 text-xs">• Click to copy model ID</span>`;
+                    `<span class="text-gray-300">${email}</span> <span class="text-gray-600 text-xs">• ${planText} • Click to copy model ID</span>`;
+
+                // Show refresh success toast
+                const toast = document.getElementById('copy-toast');
+                toast.textContent = 'Refreshed!';
+                toast.classList.remove('opacity-0');
+                toast.classList.add('opacity-100');
+                setTimeout(() => {
+                    toast.classList.remove('opacity-100');
+                    toast.classList.add('opacity-0');
+                }, 1200);
 
                 // Sort and render models
                 const sorted = sortModels(data.models);
