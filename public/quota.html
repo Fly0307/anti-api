@@ -195,25 +195,26 @@
                     class="fixed top-4 left-1/2 -translate-x-1/2 bg-gray-800 text-gray-300 px-4 py-2 rounded-lg text-sm opacity-0 transition-opacity duration-300 pointer-events-none">
                     Copied!</div>
             </div>
-            <div class="text-right flex items-center gap-4">
-                <a href="antigravity://settings" target="_blank" title="Open Antigravity App"
-                    class="px-3 py-2 rounded-lg text-gray-500 hover:text-gray-300 text-sm transition-all">
-                    🔄 Account
-                </a>
-                <button onclick="toggleTheme()" id="theme-btn"
-                    class="px-3 py-2 rounded-lg text-gray-500 hover:text-gray-300 text-sm transition-all">
-                    ☀️
-                </button>
-                <div>
-                    <div class="refresh-btn inline-block" id="refresh-container">
-                        <button onclick="fetchQuota()" id="refresh-btn"
-                            class="px-6 py-2 rounded-lg font-bold text-gray-300">
-                            Refresh
-                        </button>
-                    </div>
-                    <p id="last-updated" class="text-gray-600 text-xs mt-2"></p>
+            <div class="flex items-center gap-3">
+                <div class="refresh-btn inline-block" id="logout-container">
+                    <a href="antigravity://settings" id="logout-btn"
+                        class="px-6 py-2 rounded-lg font-bold text-gray-300 inline-block">
+                        Log out
+                    </a>
+                </div>
+                <div class="refresh-btn inline-block" id="refresh-container">
+                    <button onclick="fetchQuota()" id="refresh-btn"
+                        class="px-6 py-2 rounded-lg font-bold text-gray-300">
+                        Refresh
+                    </button>
+                </div>
+                <div class="refresh-btn inline-block" id="theme-container">
+                    <button onclick="toggleTheme()" id="theme-btn" class="px-6 py-2 rounded-lg font-bold text-gray-300">
+                        Light
+                    </button>
                 </div>
             </div>
+            <p id="last-updated" class="text-gray-600 text-xs mt-2 text-right"></p>
         </div>
 
         <!-- Quota Grid -->
@@ -238,14 +239,14 @@
             document.body.classList.toggle('light-mode');
             const btn = document.getElementById('theme-btn');
             const isLight = document.body.classList.contains('light-mode');
-            btn.textContent = isLight ? '🌙' : '☀️';
+            btn.textContent = isLight ? 'Dark' : 'Light';
             localStorage.setItem('theme', isLight ? 'light' : 'dark');
         }
 
         // Load saved theme
         if (localStorage.getItem('theme') === 'light') {
             document.body.classList.add('light-mode');
-            document.getElementById('theme-btn').textContent = '🌙';
+            document.getElementById('theme-btn').textContent = 'Dark';
         }
 
         // 3D 倾斜效果
