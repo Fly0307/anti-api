@@ -161,7 +161,24 @@
             border: 1px solid rgba(59, 42, 84, 0.3);
         }
 
-        .refresh-btn.active button {
+        /* Log out 按钮 - Claude 橙色霓虹 */
+        #logout-container.active button {
+            background: rgba(218, 119, 86, 0.15);
+            border-color: var(--claude-orange);
+            backdrop-filter: blur(20px);
+            animation: claude-breathe 2s ease-in-out infinite;
+        }
+
+        /* Refresh 按钮 - Gemini 蓝色霓虹 */
+        #refresh-container.active button {
+            background: rgba(71, 150, 227, 0.15);
+            border-color: var(--gemini-blue);
+            backdrop-filter: blur(20px);
+            animation: gemini-breathe 2s ease-in-out infinite;
+        }
+
+        /* Theme 按钮 - GPT 白色霓虹 */
+        #theme-container.active button {
             background: rgba(255, 255, 255, 0.15);
             border-color: var(--white-glow);
             backdrop-filter: blur(20px);
