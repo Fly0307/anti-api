@@ -13,18 +13,17 @@
 
 ---
 
-> ⚠️ **Disclaimer**: This project is based on reverse engineering of Antigravity. Future compatibility is not guaranteed. Use at your own risk. Not officially supported.
+> **Disclaimer**: This project is based on reverse engineering of Antigravity. Future compatibility is not guaranteed. Use at your own risk. Not officially supported.
 
-> 🔧 **Known Issue**: Claude Code's tool use (file/command operations) is currently not working due to Antigravity's response format. **We are actively investigating this issue and expect a fix soon.** Chat functionality works perfectly.
+> **Known Issue**: Claude Code's tool use (file/command operations) is currently not working due to Antigravity's response format. **We are actively investigating this issue and expect a fix soon.** Chat functionality works perfectly.
 
 ## Features
 
-- 🚀 **Full Model Support** - Access Opus 4.5 Thinking, Sonnet 4.5 Thinking, Gemini 3 Pro High and more
-- 🔌 **Anthropic API Compatible** - Works with Cherry Studio, ChatWise, Obsidian Copilot (chat mode)
-- 📊 **Quota Dashboard** - Built-in web UI to monitor model usage at `http://localhost:8964`
-- ⚡ **One-Click Start** - Double-click `start.command` to launch
-- 🪶 **Lightweight** - Minimal memory footprint
-- 🔒 **Local Only** - All requests stay on your machine
+- **Full Model Support** - Access Claude Opus 4.5, Sonnet 4.5, Gemini 3 Pro and more
+- **Anthropic API Compatible** - Works with Cherry Studio, ChatWise, Obsidian Copilot (chat mode)
+- **Quota Dashboard** - Built-in web UI to monitor model usage at `http://localhost:8964`
+- **Lightweight** - Minimal memory footprint
+- **Local Only** - All requests stay on your machine
 
 ## Requirements
 
@@ -39,8 +38,6 @@
 bun install
 
 # Start the server (default port: 8964)
-./start.command
-# or
 bun run src/main.ts start
 ```
 
@@ -68,25 +65,32 @@ claude
 ## Supported Models
 
 ### Claude
-| Model | Description |
-|-------|-------------|
-| `claude-opus-4-5-thinking` | Claude Opus 4.5 (Thinking) ⭐ |
-| `claude-sonnet-4-5-thinking` | Claude Sonnet 4.5 (Thinking) ⭐ |
-| `claude-sonnet-4-5` | Claude Sonnet 4.5 |
-| `claude-haiku-4-5` | Claude Haiku 4.5 |
+| Model ID | Enum |
+|----------|------|
+| `claude-sonnet-4-5` | 333 |
+| `claude-sonnet-4-5-thinking` | 334 |
+| `claude-haiku-4-5` | 340 |
+| `claude-haiku-4-5-thinking` | 341 |
+| `claude-opus-4-5-thinking` | 291 |
+| `claude-opus-4` | 290 |
+| `claude-opus-4-thinking` | 291 |
+| `claude-sonnet-4` | 281 |
+| `claude-sonnet-4-thinking` | 282 |
 
 ### Gemini
-| Model | Description |
-|-------|-------------|
-| `gemini-3-pro-high` | Gemini 3 Pro (High) ⭐ |
-| `gemini-3-pro-low` | Gemini 3 Pro (Low) |
-| `gemini-3-flash` | Gemini 3 Flash |
-| `gemini-2-5-pro` | Gemini 2.5 Pro |
+| Model ID | Enum |
+|----------|------|
+| `gemini-3-pro-high` | 353 |
+| `gemini-3-pro-low` | 352 |
+| `gemini-3-flash` | 348 |
+| `gemini-3-pro` | 350 |
+| `gemini-2-5-pro` | 246 |
+| `gemini-2-5-flash` | 312 |
 
 ### Other
-| Model | Description |
-|-------|-------------|
-| `gpt-oss-120b` | GPT-OSS 120B |
+| Model ID | Enum |
+|----------|------|
+| `gpt-oss-120b` | 342 |
 
 ## API Endpoints
 
@@ -140,18 +144,17 @@ MIT
   <strong>将 Antigravity 内置的 AI 模型暴露为 Anthropic 兼容的 API</strong>
 </p>
 
-> ⚠️ **免责声明**：本项目基于 Antigravity 最新版本逆向开发，未来新版本的可用性未知。未受官方支持，使用风险自负。
+> **免责声明**：本项目基于 Antigravity 最新版本逆向开发，未来新版本的可用性未知。未受官方支持，使用风险自负。
 
-> 🔧 **已知问题**：Claude Code 的工具调用（文件/命令操作）目前因 Antigravity 响应格式问题暂不可用。**正在积极研究中，预计很快修复。** 纯对话功能完全正常。
+> **已知问题**：Claude Code 的工具调用（文件/命令操作）目前因 Antigravity 响应格式问题暂不可用。**正在积极研究中，预计很快修复。** 纯对话功能完全正常。
 
 ## 特性
 
-- 🚀 **完整模型支持** - 支持 Opus 4.5 Thinking / Sonnet 4.5 Thinking / Gemini 3 Pro High 等模型
-- 🔌 **Anthropic API 兼容** - 支持 Cherry Studio、ChatWise、Obsidian Copilot 等聊天工具
-- 📊 **额度查看面板** - 内置 Web UI，访问 `http://localhost:8964` 即可查看
-- ⚡ **一键启动** - 双击 `start.command` 即可运行
-- 🪶 **极低内存占用** - 轻量级设计
-- 🔒 **本地运行** - 所有请求都在本地处理
+- **完整模型支持** - 支持 Claude Opus 4.5 / Sonnet 4.5 / Gemini 3 Pro 等模型
+- **Anthropic API 兼容** - 支持 Cherry Studio、ChatWise、Obsidian Copilot 等聊天工具
+- **额度查看面板** - 内置 Web UI，访问 `http://localhost:8964` 即可查看
+- **极低内存占用** - 轻量级设计
+- **本地运行** - 所有请求都在本地处理
 
 ## 前置要求
 
@@ -166,8 +169,6 @@ MIT
 bun install
 
 # 启动服务器（默认端口：8964）
-./start.command
-# 或者
 bun run src/main.ts start
 ```
 
@@ -195,25 +196,32 @@ claude
 ## 支持的模型
 
 ### Claude
-| 模型 ID | 说明 |
-|---------|------|
-| `claude-opus-4-5-thinking` | Claude Opus 4.5（思考模式）⭐ |
-| `claude-sonnet-4-5-thinking` | Claude Sonnet 4.5（思考模式）⭐ |
-| `claude-sonnet-4-5` | Claude Sonnet 4.5 |
-| `claude-haiku-4-5` | Claude Haiku 4.5 |
+| 模型 ID | 枚举值 |
+|---------|--------|
+| `claude-sonnet-4-5` | 333 |
+| `claude-sonnet-4-5-thinking` | 334 |
+| `claude-haiku-4-5` | 340 |
+| `claude-haiku-4-5-thinking` | 341 |
+| `claude-opus-4-5-thinking` | 291 |
+| `claude-opus-4` | 290 |
+| `claude-opus-4-thinking` | 291 |
+| `claude-sonnet-4` | 281 |
+| `claude-sonnet-4-thinking` | 282 |
 
 ### Gemini
-| 模型 ID | 说明 |
-|---------|------|
-| `gemini-3-pro-high` | Gemini 3 Pro（高配）⭐ |
-| `gemini-3-pro-low` | Gemini 3 Pro（低配） |
-| `gemini-3-flash` | Gemini 3 Flash |
-| `gemini-2-5-pro` | Gemini 2.5 Pro |
+| 模型 ID | 枚举值 |
+|---------|--------|
+| `gemini-3-pro-high` | 353 |
+| `gemini-3-pro-low` | 352 |
+| `gemini-3-flash` | 348 |
+| `gemini-3-pro` | 350 |
+| `gemini-2-5-pro` | 246 |
+| `gemini-2-5-flash` | 312 |
 
 ### 其他
-| 模型 ID | 说明 |
-|---------|------|
-| `gpt-oss-120b` | GPT-OSS 120B |
+| 模型 ID | 枚举值 |
+|---------|--------|
+| `gpt-oss-120b` | 342 |
 
 ## API 端点
 
