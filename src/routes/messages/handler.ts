@@ -65,7 +65,6 @@ function generateMessageId(): string {
  */
 export async function handleCompletion(c: Context): Promise<Response> {
     const payload = await c.req.json<AnthropicMessagesPayload>()
-    consola.debug("Anthropic request:", JSON.stringify(payload).slice(0, 500))
 
     const messages = translateMessages(payload)
 

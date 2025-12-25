@@ -15,7 +15,9 @@
 
 > **Disclaimer**: This project is based on reverse engineering of Antigravity. Future compatibility is not guaranteed. Use at your own risk. Not officially supported.
 
-> **Known Issue**: Claude Code's tool use (file/command operations) is currently not working due to Antigravity's response format. **We are actively investigating this issue and expect a fix soon.** Chat functionality works perfectly.
+> **Known Issues**:
+> - **Claude Code Tool Use**: Tool operations (file/command) are not working due to Antigravity's response format limitations. Chat functionality works perfectly.
+> - **Context Leakage**: Due to Antigravity's IDE-integrated architecture, responses may occasionally include minor IDE context (e.g., "I notice you opened..."). Anti-API includes a built-in filter to remove this automatically without affecting performance.
 
 ## Features
 
@@ -146,7 +148,9 @@ MIT
 
 > **免责声明**：本项目基于 Antigravity 最新版本逆向开发，未来新版本的可用性未知。未受官方支持，使用风险自负。
 
-> **已知问题**：Claude Code 的工具调用（文件/命令操作）目前因 Antigravity 响应格式问题暂不可用。**正在积极研究中，预计很快修复。** 纯对话功能完全正常。
+> **已知问题**：
+> - **Claude Code 工具调用**：文件/命令操作因 Antigravity 响应格式限制暂不可用。纯对话功能完全正常。
+> - **上下文泄露**：由于 Antigravity 是 IDE 集成架构，响应中偶尔会包含少许 IDE 上下文（如"我注意到你打开了..."）。Anti-API 内置过滤器可自动移除这些内容，不影响性能。
 
 ## 特性
 

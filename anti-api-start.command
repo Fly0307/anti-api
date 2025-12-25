@@ -18,13 +18,13 @@ echo ""
 
 PORT=8964
 
+echo "端口: $PORT"
+
 # 检查端口占用
 if lsof -i :$PORT > /dev/null 2>&1; then
-    echo "端口: $PORT"
+    echo "端口被占用."
     lsof -ti :$PORT | xargs kill -9 2>/dev/null
-    echo "端口被占用但已释放."
-else
-    echo "端口: $PORT"
+    echo "端口已释放."
 fi
 
 # 检查 bun
@@ -40,11 +40,11 @@ if [ ! -d "node_modules" ]; then
     bun install --silent
 fi
 
-echo "anti-api已启动."
+echo "项目已启动."
 echo ""
 echo "================================"
 echo ""
-echo "配额面板:"
+echo "配额监控:"
 echo "http://localhost:$PORT/quota"
 echo ""
 echo "================================"
