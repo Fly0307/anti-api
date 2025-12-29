@@ -225,10 +225,22 @@
             </div>
             <div class="text-right">
                 <div class="flex items-center gap-3 justify-end">
+                    <div class="refresh-btn inline-block">
+                        <a href="/remote-panel" id="remote-btn"
+                            class="px-4 py-1.5 rounded-lg font-bold text-gray-300 text-sm inline-block">
+                            Remote(Beta)
+                        </a>
+                    </div>
                     <div class="refresh-btn inline-block" id="logout-container">
-                        <button onclick="window.open('antigravity://settings')" id="logout-btn"
+                        <button onclick="handleLogout()" id="logout-btn"
                             class="px-4 py-1.5 rounded-lg font-bold text-gray-300 text-sm">
                             Log out
+                        </button>
+                    </div>
+                    <div class="refresh-btn inline-block" id="login-container" style="display: none;">
+                        <button onclick="handleLogin()" id="login-btn"
+                            class="px-4 py-1.5 rounded-lg font-bold text-green-400 text-sm">
+                            Log in
                         </button>
                     </div>
                     <div class="refresh-btn inline-block" id="refresh-container">
@@ -451,8 +463,14 @@
                 const data = await response.json();
 
                 if (data.error) {
-                    document.getElementById('plan-info').innerHTML =
-                        `<span class="text-gray-300">Failed to load quota</span>`;
+                    // 显示友好提示而不是错误
+                    document.getElementById('quota-grid').innerHTML = `
+                        <div class="text-center py-12">
+                            <p class="text-gray-400 mb-2">📊 配额详情不可用</p>
+                            <p class="text-gray-600 text-sm">需要 Antigravity IDE 运行才能显示配额</p>
+                            <p class="text-gray-600 text-sm mt-1">API 功能正常可用</p>
+                        </div>
+                    `;
                     return;
                 }
 
@@ -519,12 +537,126 @@
             }
         }
 
+        // 隧道状态变量
+        let tunnelUrl = null;
+
+        // 检查隧道状态
+        async function checkTunnelStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/tunnel/status`);
+                const data = await response.json();
+
+                const tunnelContainer = document.getElementById('tunnel-container');
+
+                if (data.active && data.url) {
+                    tunnelUrl = data.url;
+                    tunnelContainer.style.display = 'block';
+                } else {
+                    tunnelUrl = null;
+                    tunnelContainer.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Failed to check tunnel status:', error);
+            }
+        }
+
+        // 复制隧道 URL
+        async function copyTunnelUrl() {
+            if (!tunnelUrl) return;
+
+            try {
+                await navigator.clipboard.writeText(tunnelUrl);
+
+                // 显示复制成功提示
+                const toast = document.getElementById('copy-toast');
+                toast.textContent = `Copied: ${tunnelUrl}`;
+                toast.classList.remove('opacity-0', 'translate-x-8');
+
+                setTimeout(() => {
+                    toast.classList.add('opacity-0', 'translate-x-8');
+                }, 2000);
+            } catch (error) {
+                alert(`Failed to copy: ${tunnelUrl}`);
+            }
+        }
+
+        // 检查认证状态并更新按钮显示
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/status`);
+                const data = await response.json();
+
+                const loginContainer = document.getElementById('login-container');
+                const logoutContainer = document.getElementById('logout-container');
+                const planInfo = document.getElementById('plan-info');
+
+                if (data.authenticated) {
+                    loginContainer.style.display = 'none';
+                    logoutContainer.style.display = 'block';
+                    // 显示账号信息
+                    planInfo.innerHTML = `<span class="text-green-400">✓ ${data.email || 'Logged in'}</span> <span class="text-gray-600 text-xs">• Anti-API •</span> <span class="text-gray-600 text-xs">Click to copy model ID</span>`;
+                } else {
+                    loginContainer.style.display = 'block';
+                    logoutContainer.style.display = 'none';
+                    planInfo.innerHTML = `<span class="text-red-400">✗ Not logged in</span> <span class="text-gray-600 text-xs">• Please log in to use API</span>`;
+                }
+            } catch (error) {
+                console.error('Failed to check auth status:', error);
+                document.getElementById('plan-info').innerHTML = `<span class="text-gray-500">Connection error</span>`;
+            }
+        }
+
+        // 登录处理
+        async function handleLogin() {
+            const btn = document.getElementById('login-btn');
+            btn.textContent = 'Logging in...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`Login successful: ${data.email}`);
+                    await checkAuthStatus();
+                    fetchQuota(true);
+                } else {
+                    alert(`Login failed: ${data.error}`);
+                }
+            } catch (error) {
+                alert(`Login error: ${error.message}`);
+            } finally {
+                btn.textContent = 'Log in';
+                btn.disabled = false;
+            }
+        }
+
+        // 登出处理
+        async function handleLogout() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Logged out successfully');
+                    await checkAuthStatus();
+                }
+            } catch (error) {
+                alert(`Logout error: ${error.message}`);
+            }
+        }
+
         // Initial load
+        checkAuthStatus();
+        checkTunnelStatus();
         fetchQuota();
         init3DEffect();
 
         // Auto refresh every 60 seconds
-        setInterval(() => fetchQuota(false), 60000);
+        setInterval(() => {
+            fetchQuota(false);
+            checkTunnelStatus();
+        }, 60000);
     </script>
 </body>
 

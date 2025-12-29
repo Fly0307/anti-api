@@ -40,12 +40,6 @@ if [ ! -d "node_modules" ]; then
     bun install --silent
 fi
 
-echo "项目已启动."
-echo ""
-echo "================================"
-echo ""
-echo "配额监控:"
-echo "http://localhost:$PORT/quota"
 echo ""
 echo "================================"
 echo ""

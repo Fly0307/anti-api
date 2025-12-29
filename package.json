@@ -18,11 +18,13 @@
     "citty": "^0.1.6",
     "consola": "^3.2.3",
     "hono": "^4.6.14",
+    "localtunnel": "^2.0.2",
     "undici": "^7.16.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/bun": "latest",
+    "@types/localtunnel": "^2.0.4",
     "typescript": "^5.7.2"
   }
 }

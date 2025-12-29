@@ -25,6 +25,7 @@ Thumbs.db
 payload*.json
 
 # Local config
+data/
 settings.json
 .env
 .env.*

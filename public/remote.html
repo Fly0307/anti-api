@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anti-API Remote Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --gemini-blue: #4796E3;
+            --claude-orange: #DA7756;
+            --white-glow: #ffffff;
+            --dark-purple: #3b2a54;
+            --pure-black: #000000;
+            --warm-dark: #262624;
+        }
+
+        body {
+            background: var(--pure-black);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        @media (prefers-color-scheme: light) {
+            body {
+                background: var(--warm-dark);
+            }
+
+            .card-inner {
+                background: rgba(50, 50, 48, 0.9) !important;
+            }
+
+            .refresh-btn button {
+                background: rgba(50, 50, 48, 0.9) !important;
+            }
+
+            .instructions-box {
+                background: rgba(50, 50, 48, 0.6) !important;
+            }
+        }
+
+        .card-3d {
+            perspective: 1000px;
+        }
+
+        .card-inner {
+            transform-style: preserve-3d;
+            transition: box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+            background: rgba(17, 17, 17, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(59, 42, 84, 0.3);
+        }
+
+        /* ngrok - 蓝紫色光晕 */
+        .card-3d[data-type="ngrok"].active .card-inner,
+        .card-3d[data-type="ngrok"].hover .card-inner {
+            background: rgba(142, 158, 255, 0.15);
+            border-color: #8E9EFF;
+            animation: ngrok-breathe 2s ease-in-out infinite;
+        }
+
+        @keyframes ngrok-breathe {
+
+            0%,
+            100% {
+                box-shadow: 0 0 20px rgba(142, 158, 255, 0.4),
+                    0 0 40px rgba(142, 158, 255, 0.2);
+            }
+
+            50% {
+                box-shadow: 0 0 35px rgba(142, 158, 255, 0.7),
+                    0 0 70px rgba(142, 158, 255, 0.4);
+            }
+        }
+
+        /* cloudflared - 橙色光晕 */
+        .card-3d[data-type="cloudflared"].active .card-inner,
+        .card-3d[data-type="cloudflared"].hover .card-inner {
+            background: rgba(255, 157, 110, 0.15);
+            border-color: #FF9D6E;
+            animation: cloudflared-breathe 2s ease-in-out infinite;
+        }
+
+        @keyframes cloudflared-breathe {
+
+            0%,
+            100% {
+                box-shadow: 0 0 20px rgba(255, 157, 110, 0.4),
+                    0 0 40px rgba(255, 157, 110, 0.2);
+            }
+
+            50% {
+                box-shadow: 0 0 35px rgba(255, 157, 110, 0.7),
+                    0 0 70px rgba(255, 157, 110, 0.4);
+            }
+        }
+
+        /* localtunnel - 白色光晕 */
+        .card-3d[data-type="localtunnel"].active .card-inner,
+        .card-3d[data-type="localtunnel"].hover .card-inner {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #FFFFFF;
+            animation: localtunnel-breathe 2s ease-in-out infinite;
+        }
+
+        @keyframes localtunnel-breathe {
+
+            0%,
+            100% {
+                box-shadow: 0 0 20px rgba(255, 255, 255, 0.4),
+                    0 0 40px rgba(255, 255, 255, 0.2);
+            }
+
+            50% {
+                box-shadow: 0 0 35px rgba(255, 255, 255, 0.7),
+                    0 0 70px rgba(255, 255, 255, 0.4);
+            }
+        }
+
+        /* 按钮样式 */
+        .refresh-btn {
+            perspective: 1000px;
+        }
+
+        .refresh-btn button {
+            transform-style: preserve-3d;
+            transition: box-shadow 0.3s ease, background 0.3s ease, border-color 0.3s ease;
+            background: rgba(17, 17, 17, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(59, 42, 84, 0.3);
+        }
+
+        .refresh-btn button:hover:not(:disabled) {
+            background: rgba(40, 40, 40, 0.9);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .refresh-btn button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .toast {
+            background: rgba(40, 40, 40, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #fff;
+            margin-bottom: 8px;
+            transform: translateX(400px);
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .toast.show {
+            transform: translateX(0);
+            opacity: 1;
+        }
+
+        .toast.error {
+            border: 1px solid rgba(239, 68, 68, 0.5);
+        }
+    </style>
+</head>
+
+<body class="min-h-screen p-6">
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="mb-6 flex items-center justify-between">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-300">Anti-API Remote Dashboard</h1>
+                <p id="plan-info" class="text-gray-500 text-sm font-bold mt-1">Loading...</p>
+            </div>
+            <div class="refresh-btn">
+                <a href="/quota" class="px-4 py-2 rounded-lg font-bold text-gray-300 text-sm inline-block"
+                    style="background: rgba(17, 17, 17, 0.9); border: 1px solid rgba(59, 42, 84, 0.3);">
+                    ← Quota Dashboard
+                </a>
+            </div>
+        </div>
+
+        <!-- Usage Instructions -->
+        <div class="mb-6 p-4 rounded-xl instructions-box"
+            style="background: rgba(30, 30, 30, 0.6); border: 1px solid rgba(255, 255, 255, 0.1);">
+            <p class="text-gray-400 text-sm mb-2">1. This feature is currently in beta. After one-click startup, you can
+                use the <a href="https://github.com/ink1ing/anti-api" target="_blank"
+                    class="text-blue-400 underline">anti-api</a> service on any other device without being limited to
+                this computer.</p>
+            <p class="text-gray-400 text-sm mb-2">2. Please prioritize ngrok, as this service is the most stable, but
+                requires <a href="https://ngrok.com/signup" target="_blank" class="text-blue-400 underline">free
+                    registration</a> on first use. After registration, obtain your Authtoken, fill it in, and click
+                start for one-click startup.</p>
+            <p class="text-gray-400 text-sm mb-2">3. cloudflared has
+                strict network requirements and is unavailable in Tun mode. Click to learn: <a
+                    href="https://x.com/Ink_thesilent/status/2004594050239004815" target="_blank"
+                    class="text-blue-400 underline">How to use antigravity with Tun disabled</a>.</p>
+            <p class="text-gray-400 text-sm mb-2">4. localtunnel is inherently
+                unstable and should only be used as a backup option. The value obtained from clicking getip can be
+                filled in the subdomain field.</p>
+            <p class="text-gray-400 text-sm">5. If you are unable to start, please go to the <a
+                    href="https://github.com/ink1ing/anti-api/issues" target="_blank"
+                    class="text-blue-400 underline">GitHub repository</a> and submit detailed issues. Thank you for your
+                feedback!</p>
+        </div>
+
+        <!-- Tunnel Cards - 横向排列 -->
+        <div class="grid grid-cols-3 gap-4">
+            <!-- ngrok Card - 第一位（最推荐）-->
+            <div class="card-3d h-full" data-type="ngrok">
+                <div class="card-inner rounded-xl p-4 h-full" id="ngrok-card">
+                    <p class="text-white text-lg font-bold mb-2">ngrok</p>
+                    <input type="text" id="ngrok-authtoken" placeholder="Authtoken"
+                        class="w-full px-2 py-1 rounded text-white text-xs mb-3"
+                        style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);">
+                    <div class="flex gap-2 mb-3">
+                        <div class="refresh-btn">
+                            <button id="ngrok-start" onclick="startTunnel('ngrok')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs">
+                                Start
+                            </button>
+                        </div>
+                        <div class="refresh-btn">
+                            <button id="ngrok-stop" onclick="stopTunnel('ngrok')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs" disabled>
+                                Stop
+                            </button>
+                        </div>
+                        <div class="refresh-btn">
+                            <button id="ngrok-copy" onclick="copyUrl('ngrok')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs" disabled>
+                                Copy
+                            </button>
+                        </div>
+                    </div>
+                    <div id="ngrok-status" class="text-xs text-gray-500 truncate">未启动</div>
+                </div>
+            </div>
+
+            <!-- Cloudflared Card - 第二位 -->
+            <div class="card-3d h-full" data-type="cloudflared">
+                <div class="card-inner rounded-xl p-4 h-full" id="cloudflared-card">
+                    <p class="text-white text-lg font-bold mb-3">cloudflared</p>
+                    <div class="flex gap-2 mb-3">
+                        <div class="refresh-btn">
+                            <button id="cloudflared-start" onclick="startTunnel('cloudflared')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs">
+                                Start
+                            </button>
+                        </div>
+                        <div class="refresh-btn">
+                            <button id="cloudflared-stop" onclick="stopTunnel('cloudflared')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs" disabled>
+                                Stop
+                            </button>
+                        </div>
+                        <div class="refresh-btn">
+                            <button id="cloudflared-copy" onclick="copyUrl('cloudflared')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs" disabled>
+                                Copy
+                            </button>
+                        </div>
+                    </div>
+                    <div id="cloudflared-status" class="text-xs text-gray-500 truncate">未启动</div>
+                </div>
+            </div>
+
+            <!-- localtunnel Card -->
+            <div class="card-3d h-full" data-type="localtunnel">
+                <div class="card-inner rounded-xl p-4 h-full" id="localtunnel-card">
+                    <p class="text-white text-lg font-bold mb-2">localtunnel</p>
+                    <input type="text" id="localtunnel-subdomain" placeholder="Subdomain (可选)"
+                        class="w-full px-2 py-1 rounded text-white text-xs mb-3"
+                        style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);">
+                    <div class="flex gap-2 mb-3">
+                        <div class="refresh-btn">
+                            <button id="localtunnel-start" onclick="startTunnel('localtunnel')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs">
+                                Start
+                            </button>
+                        </div>
+                        <div class="refresh-btn">
+                            <button id="localtunnel-getip" onclick="getPublicIP()"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs">
+                                GetIP
+                            </button>
+                        </div>
+                        <div class="refresh-btn">
+                            <button id="localtunnel-stop" onclick="stopTunnel('localtunnel')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs" disabled>
+                                Stop
+                            </button>
+                        </div>
+                        <div class="refresh-btn">
+                            <button id="localtunnel-copy" onclick="copyUrl('localtunnel')"
+                                class="px-3 py-1.5 rounded-lg font-bold text-gray-300 text-xs" disabled>
+                                Copy
+                            </button>
+                        </div>
+                    </div>
+                    <div id="localtunnel-status" class="text-xs text-gray-500 truncate">未启动</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-8 right-8 z-50"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:8964';
+        const tunnelUrls = { cloudflared: null, ngrok: null, localtunnel: null };
+
+        function showToast(message, isError = false) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${isError ? 'error' : ''}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.classList.add('show'), 10);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => container.removeChild(toast), 300);
+            }, 3000);
+        }
+
+        async function getPublicIP() {
+            try {
+                const res = await fetch(`${API_BASE}/remote/public-ip`);
+                const data = await res.json();
+                showToast(`你的公网IP: ${data.ip}`);
+            } catch (error) {
+                showToast('获取IP失败', true);
+            }
+        }
+
+        async function startTunnel(type) {
+            const startBtn = document.getElementById(`${type}-start`);
+            const stopBtn = document.getElementById(`${type}-stop`);
+            const copyBtn = document.getElementById(`${type}-copy`);
+            const statusDiv = document.getElementById(`${type}-status`);
+            const card = document.querySelector(`.card-3d[data-type="${type}"]`);
+
+            startBtn.disabled = true;
+            statusDiv.textContent = '启动中...';
+
+            try {
+                const body = {};
+                if (type === 'ngrok') {
+                    const authtoken = document.getElementById('ngrok-authtoken').value.trim();
+                    if (authtoken) body.authtoken = authtoken;
+                }
+                if (type === 'localtunnel') {
+                    const subdomain = document.getElementById('localtunnel-subdomain').value.trim();
+                    if (subdomain) body.subdomain = subdomain;
+                }
+
+                const res = await fetch(`${API_BASE}/remote/${type}/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                const data = await res.json();
+
+                if (data.active && data.url) {
+                    tunnelUrls[type] = data.url;
+                    statusDiv.textContent = `✓ ${data.url}`;
+                    card.classList.add('active');
+                    stopBtn.disabled = false;
+                    copyBtn.disabled = false;
+                    showToast(`${type} 启动成功`);
+                } else if (data.active && !data.url) {
+                    statusDiv.textContent = '启动中，等待URL...';
+                    setTimeout(() => refreshStatus(), 2000);
+                } else {
+                    statusDiv.textContent = `✗ ${data.error || '启动失败'}`;
+                    startBtn.disabled = false;
+                    showToast(data.error || '启动失败', true);
+                }
+            } catch (error) {
+                statusDiv.textContent = `✗ ${error.message}`;
+                startBtn.disabled = false;
+                showToast(error.message, true);
+            }
+        }
+
+        async function stopTunnel(type) {
+            const startBtn = document.getElementById(`${type}-start`);
+            const stopBtn = document.getElementById(`${type}-stop`);
+            const copyBtn = document.getElementById(`${type}-copy`);
+            const statusDiv = document.getElementById(`${type}-status`);
+            const card = document.querySelector(`.card-3d[data-type="${type}"]`);
+
+            try {
+                await fetch(`${API_BASE}/remote/${type}/stop`, { method: 'POST' });
+                tunnelUrls[type] = null;
+                statusDiv.textContent = '未启动';
+                card.classList.remove('active');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                copyBtn.disabled = true;
+            } catch (error) {
+                showToast(error.message, true);
+            }
+        }
+
+        async function copyUrl(type) {
+            const url = tunnelUrls[type];
+            if (!url) {
+                showToast('没有可复制的URL', true);
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(url);
+                showToast('URL已复制到剪贴板');
+            } catch (error) {
+                showToast('复制失败', true);
+            }
+        }
+
+        async function refreshStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/remote/status`);
+                const data = await res.json();
+
+                for (const [type, status] of Object.entries(data)) {
+                    const startBtn = document.getElementById(`${type}-start`);
+                    const stopBtn = document.getElementById(`${type}-stop`);
+                    const copyBtn = document.getElementById(`${type}-copy`);
+                    const statusDiv = document.getElementById(`${type}-status`);
+                    const card = document.querySelector(`.card-3d[data-type="${type}"]`);
+
+                    if (status.active && status.url) {
+                        tunnelUrls[type] = status.url;
+                        statusDiv.textContent = `✓ ${status.url}`;
+                        card.classList.add('active');
+                        startBtn.disabled = true;
+                        stopBtn.disabled = false;
+                        copyBtn.disabled = false;
+                    } else if (status.active && !status.url) {
+                        statusDiv.textContent = '启动中，等待URL...';
+                        startBtn.disabled = true;
+                    } else {
+                        tunnelUrls[type] = null;
+                        statusDiv.textContent = '未启动';
+                        card.classList.remove('active');
+                        startBtn.disabled = false;
+                        stopBtn.disabled = true;
+                        copyBtn.disabled = true;
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to refresh status:', error);
+            }
+        }
+
+        async function loadConfig() {
+            try {
+                const res = await fetch(`${API_BASE}/remote/config`);
+                const data = await res.json();
+                if (data.ngrokAuthtoken) {
+                    document.getElementById('ngrok-authtoken').value = data.ngrokAuthtoken;
+                }
+                if (data.localtunnelSubdomain) {
+                    document.getElementById('localtunnel-subdomain').value = data.localtunnelSubdomain;
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+            }
+        }
+
+        function init3DEffect() {
+            // 卡片效果 - 与 quota.html 完全一致
+            // 使用 hover class 而不是 active，避免与隧道运行状态冲突
+            document.querySelectorAll('.card-3d').forEach(card => {
+                const inner = card.querySelector('.card-inner');
+                if (!inner) return;
+
+                card.addEventListener('mousemove', (e) => {
+                    const rect = card.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const centerX = rect.width / 2;
+                    const centerY = rect.height / 2;
+
+                    // 计算旋转角度 (最大 15 度)
+                    const rotateX = ((y - centerY) / centerY) * -15;
+                    const rotateY = ((x - centerX) / centerX) * 15;
+
+                    inner.style.transform = `rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+                    card.classList.add('hover');
+                });
+
+                card.addEventListener('mouseleave', () => {
+                    inner.style.transform = 'rotateX(0) rotateY(0)';
+                    card.classList.remove('hover');
+                });
+            });
+        }
+
+        // 检查认证状态并更新显示
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/auth/status`);
+                const data = await response.json();
+                const planInfo = document.getElementById('plan-info');
+
+                if (data.authenticated) {
+                    planInfo.innerHTML = `<span class="text-white">✓ ${data.email || 'Logged in'}</span> <span class="text-gray-600">•</span> <span class="text-white">Pro Plan</span> <span class="text-gray-600">•</span> <span class="text-blue-400">Beta</span>`;
+                } else {
+                    planInfo.innerHTML = `<span class="text-red-400">✗ Not logged in</span>`;
+                }
+            } catch (error) {
+                document.getElementById('plan-info').innerHTML = `<span class="text-gray-500">Connection error</span>`;
+            }
+        }
+
+        loadConfig();
+        refreshStatus();
+        checkAuthStatus();
+        setInterval(refreshStatus, 5000);
+        init3DEffect();
+    </script>
+</body>
+
+</html>

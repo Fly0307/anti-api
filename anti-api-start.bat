@@ -37,12 +37,6 @@ if not exist "node_modules" (
     bun install --silent
 )
 
-echo 项目已启动.
-echo.
-echo ================================
-echo.
-echo 配额监控:
-echo http://localhost:%PORT%/quota
 echo.
 echo ================================
 echo.

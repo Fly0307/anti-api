@@ -7,7 +7,8 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 import consola from "consola"
 
-import { createChatCompletion, createChatCompletionStream, type ChatMessage } from "~/services/antigravity/chat"
+import { createChatCompletion, createChatCompletionStream } from "~/services/antigravity/chat"
+import type { ClaudeMessage, ClaudeTool } from "~/lib/translator"
 import type {
     AnthropicMessagesPayload,
     AnthropicMessage,
@@ -17,40 +18,25 @@ import type {
 } from "./types"
 
 /**
- * 将Anthropic消息转换为内部格式
+ * 将Anthropic消息转换为 Claude 格式（保留完整结构）
  */
-function translateMessages(payload: AnthropicMessagesPayload): ChatMessage[] {
-    const messages: ChatMessage[] = []
-
-    // 处理system消息
-    if (payload.system) {
-        const systemText = typeof payload.system === "string"
-            ? payload.system
-            : payload.system.map(b => b.text).join("\n")
-        messages.push({ role: "system", content: systemText })
-    }
-
-    // 处理对话消息
-    for (const msg of payload.messages) {
-        const content = extractTextContent(msg)
-        messages.push({ role: msg.role, content })
-    }
-
-    return messages
+function translateMessages(payload: AnthropicMessagesPayload): ClaudeMessage[] {
+    return payload.messages as unknown as ClaudeMessage[]
 }
 
 /**
- * 提取消息文本内容
+ * 提取工具定义
  */
-function extractTextContent(message: AnthropicMessage): string {
-    if (typeof message.content === "string") {
-        return message.content
+function extractTools(payload: AnthropicMessagesPayload): ClaudeTool[] | undefined {
+    if (!payload.tools || payload.tools.length === 0) {
+        return undefined
     }
 
-    return message.content
-        .filter((block): block is AnthropicTextBlock => block.type === "text")
-        .map(block => block.text)
-        .join("\n")
+    return payload.tools.map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.input_schema
+    }))
 }
 
 /**
@@ -66,27 +52,49 @@ function generateMessageId(): string {
 export async function handleCompletion(c: Context): Promise<Response> {
     const payload = await c.req.json<AnthropicMessagesPayload>()
 
+    // Debug: 查看收到的请求
+    // Model and tools logging simplified
+    consola.debug(`Model: ${payload.model}, Tools: ${payload.tools?.length || 0}`)
+
     const messages = translateMessages(payload)
+    const tools = extractTools(payload)
 
     // 检查是否流式
     if (payload.stream) {
-        return handleStreamCompletion(c, payload, messages)
+        return handleStreamCompletion(c, payload, messages, tools)
     }
 
     // 非流式请求
     const result = await createChatCompletion({
         model: payload.model,
         messages,
+        tools,
         maxTokens: payload.max_tokens,
+    })
+
+    // 构建响应内容 - 从 contentBlocks 转换为 Anthropic 格式
+    const content = result.contentBlocks.map(block => {
+        if (block.type === "tool_use") {
+            return {
+                type: "tool_use" as const,
+                id: block.id!,
+                name: block.name!,
+                input: block.input
+            }
+        }
+        return {
+            type: "text" as const,
+            text: block.text || ""
+        }
     })
 
     const response: AnthropicResponse = {
         id: generateMessageId(),
         type: "message",
         role: "assistant",
-        content: [{ type: "text", text: result.content }],
+        content,
         model: payload.model,
-        stop_reason: "end_turn",
+        stop_reason: result.stopReason as "end_turn" | "tool_use" | "max_tokens",
         stop_sequence: null,
         usage: {
             input_tokens: result.usage?.inputTokens || 0,
@@ -94,7 +102,7 @@ export async function handleCompletion(c: Context): Promise<Response> {
         },
     }
 
-    consola.debug("Anthropic response:", JSON.stringify(response).slice(0, 500))
+    // Response logging removed for cleaner output
     return c.json(response)
 }
 
@@ -104,87 +112,22 @@ export async function handleCompletion(c: Context): Promise<Response> {
 async function handleStreamCompletion(
     c: Context,
     payload: AnthropicMessagesPayload,
-    messages: ChatMessage[]
+    messages: ClaudeMessage[],
+    tools?: ClaudeTool[]
 ): Promise<Response> {
-    const messageId = generateMessageId()
-
     return streamSSE(c, async (stream) => {
-        // message_start 事件
-        await stream.writeSSE({
-            event: "message_start",
-            data: JSON.stringify({
-                type: "message_start",
-                message: {
-                    id: messageId,
-                    type: "message",
-                    role: "assistant",
-                    content: [],
-                    model: payload.model,
-                    stop_reason: null,
-                    stop_sequence: null,
-                    usage: { input_tokens: 0, output_tokens: 0 },
-                },
-            }),
-        })
-
-        // content_block_start 事件
-        await stream.writeSSE({
-            event: "content_block_start",
-            data: JSON.stringify({
-                type: "content_block_start",
-                index: 0,
-                content_block: { type: "text", text: "" },
-            }),
-        })
-
-        // 调用Antigravity API获取流式响应
         try {
             const chatStream = createChatCompletionStream({
                 model: payload.model,
                 messages,
-                stream: true,
+                tools,
                 maxTokens: payload.max_tokens,
             })
 
-            let totalOutputTokens = 0
-
-            for await (const chunk of chatStream) {
-                // 发送 content_block_delta
-                await stream.writeSSE({
-                    event: "content_block_delta",
-                    data: JSON.stringify({
-                        type: "content_block_delta",
-                        index: 0,
-                        delta: { type: "text_delta", text: chunk },
-                    }),
-                })
-                totalOutputTokens += 1 // 简单估计
+            // 直接写入来自翻译器的 SSE 事件
+            for await (const event of chatStream) {
+                await stream.write(event)
             }
-
-            // content_block_stop 事件
-            await stream.writeSSE({
-                event: "content_block_stop",
-                data: JSON.stringify({
-                    type: "content_block_stop",
-                    index: 0,
-                }),
-            })
-
-            // message_delta 事件
-            await stream.writeSSE({
-                event: "message_delta",
-                data: JSON.stringify({
-                    type: "message_delta",
-                    delta: { stop_reason: "end_turn", stop_sequence: null },
-                    usage: { output_tokens: totalOutputTokens },
-                }),
-            })
-
-            // message_stop 事件
-            await stream.writeSSE({
-                event: "message_stop",
-                data: JSON.stringify({ type: "message_stop" }),
-            })
 
         } catch (error) {
             consola.error("Stream error:", error)

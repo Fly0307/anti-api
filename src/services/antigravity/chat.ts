@@ -1,28 +1,82 @@
 /**
- * Antigravity Chat 服务 v6
- * 通过本地 Language Server 的 HTTPS 端点调用
+ * Antigravity Chat Service - Cloud API Version
  * 
- * 服务: exa.language_server_pb.LanguageServerService
- * 端点: SendUserCascadeMessage
- * 协议: HTTPS + application/proto
- * 
- * 重要: 使用 Bun 的 fetch，支持 TLS 和 HTTP/2
+ * 使用 Antigravity Cloud API (cloudcode-pa.googleapis.com)
+ * 这是使用 Antigravity 内置付费额度的正确方式
  */
 
 import consola from "consola"
-
-import { getToken } from "~/lib/token"
+import { getAccessToken } from "./oauth"
 import { state } from "~/lib/state"
-import { AntigravityError } from "~/lib/error"
-import { filterIDEContext } from "~/lib/ide-filter"
-import { encodeSendUserCascadeMessage } from "~/proto/encoder"
+import {
+    antigravityToClaudeSSE,
+    createConversionState,
+    type ClaudeMessage,
+    type ClaudeTool
+} from "~/lib/translator"
+
+// Antigravity Cloud API 配置
+const ANTIGRAVITY_BASE_URLS = [
+    "https://daily-cloudcode-pa.googleapis.com",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com",
+    "https://cloudcode-pa.googleapis.com",
+]
+const GENERATE_ENDPOINT = "/v1internal:generateContent"
+const STREAM_ENDPOINT = "/v1internal:streamGenerateContent"
+const DEFAULT_USER_AGENT = "antigravity/1.104.0 darwin/arm64"
 
 /**
- * 聊天消息格式
+ * 模型 ID 映射表
+ * 将用户友好的模型名转换为 Antigravity API 认识的格式
+ * 
+ * 7 个配额面板可见模型（已确认可用）:
+ * - Claude Sonnet 4.5 / Thinking
+ * - Claude Opus 4.5 (Thinking)
+ * - Gemini 3 Pro High / Low / Flash
+ * - GPT-OSS 120B
  */
-export interface ChatMessage {
-    role: "user" | "assistant" | "system"
-    content: string
+const MODEL_MAPPING: Record<string, string> = {
+    // Claude 4.5 系列 - 已确认工作
+    "claude-sonnet-4-5": "claude-sonnet-4-5",
+    "claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+    "claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
+
+    // Claude Code 使用的带日期后缀版本
+    "claude-sonnet-4-5-20251001": "claude-sonnet-4-5",
+    "claude-sonnet-4-5-20251022": "claude-sonnet-4-5",
+    "claude-haiku-4-5-20251001": "claude-sonnet-4-5",  // haiku 不可用，fallback 到 sonnet
+    "claude-haiku-4-5-20251022": "claude-sonnet-4-5",
+
+    // Gemini 3 系列 - 已确认工作
+    "gemini-3-pro-high": "gemini-3-pro-high",
+    "gemini-3-pro-low": "gemini-3-pro-low",
+    "gemini-3-flash": "gemini-3-flash",
+
+    // GPT-OSS 系列 - 需要完整名称带 -medium 后缀
+    "gpt-oss-120b": "gpt-oss-120b-medium",
+    "gpt-oss-120b-medium": "gpt-oss-120b-medium",
+
+    // 隐藏模型（可能不可用，保持原名尝试）
+    "claude-haiku-4-5": "claude-sonnet-4-5",  // haiku 不可用，fallback 到 sonnet
+    "claude-haiku-4-5-thinking": "claude-sonnet-4-5-thinking",
+    "claude-opus-4": "claude-opus-4",
+    "claude-opus-4-thinking": "claude-opus-4-thinking",
+    "claude-sonnet-4": "claude-sonnet-4",
+    "claude-sonnet-4-thinking": "claude-sonnet-4-thinking",
+    "gemini-3-pro": "gemini-3-pro",
+    "gemini-2-5-pro": "gemini-2-5-pro",
+    "gemini-2-5-flash": "gemini-2-5-flash",
+}
+
+/**
+ * 获取 Antigravity API 模型名
+ */
+function getAntigravityModelName(userModel: string): string {
+    const mapped = MODEL_MAPPING[userModel]
+    if (!mapped) {
+        consola.debug(`Unknown model: ${userModel}, mapping as-is`)
+    }
+    return mapped || userModel
 }
 
 /**
@@ -30,18 +84,27 @@ export interface ChatMessage {
  */
 export interface ChatRequest {
     model: string
-    messages: ChatMessage[]
-    stream?: boolean
+    messages: ClaudeMessage[]
+    tools?: ClaudeTool[]
     maxTokens?: number
-    system?: string
+}
+
+/**
+ * 内容块类型
+ */
+export interface ContentBlock {
+    type: "text" | "tool_use"
+    text?: string
+    id?: string
+    name?: string
+    input?: any
 }
 
 /**
  * 聊天响应
  */
 export interface ChatResponse {
-    content: string
-    model: string
+    contentBlocks: ContentBlock[]
     stopReason: string | null
     usage?: {
         inputTokens: number
@@ -49,321 +112,368 @@ export interface ChatResponse {
     }
 }
 
-// 禁用 TLS 证书验证（自签名证书）
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
-
 /**
- * 创建新的 Cascade
+ * 生成稳定的 sessionId
  */
-async function startCascade(): Promise<string> {
-    const port = state.languageServerPort
-    const csrfToken = state.csrfToken
-
-    if (!port || !csrfToken) {
-        throw new AntigravityError("Language Server 未初始化", "not_initialized")
-    }
-
-    const requestCascadeId = crypto.randomUUID()
-    const sessionId = crypto.randomUUID().slice(0, 8)  // Unique session to avoid memory leakage
-    const response = await fetch(`https://127.0.0.1:${port}/exa.language_server_pb.LanguageServerService/StartCascade`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "connect-protocol-version": "1",
-            "x-codeium-csrf-token": csrfToken,
-        },
-        body: JSON.stringify({
-            cascadeId: requestCascadeId,
-            workspaceUri: `file:///tmp/anti-api-${sessionId}`
-        }),
-    })
-
-    if (!response.ok) {
-        throw new Error(`StartCascade 失败: ${response.status}`)
-    }
-
-    const data = await response.json() as { cascadeId: string }
-    consola.info("Created new cascade:", data.cascadeId)
-    return data.cascadeId
-}
-
-/**
- * 为每个请求创建新的 Cascade
- * 避免 "executor is not idle" 错误
- */
-async function createFreshCascade(): Promise<string> {
-    return await startCascade()
-}
-
-/**
- * 构建 Protobuf 请求
- * 重要：不转发 Claude Code 的 system prompt，因为其中包含项目上下文
- */
-function buildProtobufRequest(request: ChatRequest, cascadeId: string): Uint8Array {
-    const token = getToken()
-
-    // 只取最后一条用户消息 - 不转发 system prompt 和历史消息
-    // Claude Code 的 system prompt 包含当前目录的文件列表，转发会导致上下文泄露
-    let userMessage = ""
-
-    for (const msg of request.messages) {
-        if (msg.role === "user") {
-            // 只保留最后一条用户消息
-            userMessage = msg.content
+function generateStableSessionId(messages: ClaudeMessage[]): string {
+    const userMsg = messages.find(m => m.role === "user")
+    if (userMsg && typeof userMsg.content === "string") {
+        let hash = 0
+        for (let i = 0; i < userMsg.content.length; i++) {
+            hash = ((hash << 5) - hash) + userMsg.content.charCodeAt(i)
+            hash = hash & hash
         }
-        // 忽略 system 和 assistant 消息
+        const n = Math.abs(hash) * 1000000000000
+        return `-${n}`
     }
-
-    // 过滤请求中嵌入的污染历史（Claude Code 的 Summarize/Title 请求会包含之前的对话）
-    // 这些历史中可能包含 IDE 上下文，需要在发送前清理
-    userMessage = filterEmbeddedHistory(userMessage)
-
-    return encodeSendUserCascadeMessage({
-        cascadeId: cascadeId,
-        message: userMessage.trim(),
-        apiKey: token,
-        model: request.model,
-    })
+    return `-${Math.floor(Math.random() * 9e18)}`
 }
 
 /**
- * 过滤用户消息中嵌入的污染历史
- * Claude Code 的某些请求（如 Summarize、Title）会在 user message 中嵌入之前的对话
- * 这些对话可能包含 IDE 上下文信息，需要清理
+ * 从消息内容中提取纯文本
+ * 处理 Claude 格式的 content（可以是 string 或 content blocks 数组）
+ * 支持 text, tool_use, tool_result 类型
  */
-function filterEmbeddedHistory(message: string): string {
-    // 检测是否是包含对话历史的请求
-    if (!message.includes("Claude:") && !message.includes("conversation:")) {
-        return message  // 普通消息，不处理
+function extractTextContent(content: any): string {
+    // 如果是字符串，直接返回
+    if (typeof content === "string") {
+        return content
     }
 
-    let filtered = message
-
-    // 直接替换污染内容（不依赖复杂的 Claude: 块匹配）
-    // IDE 上下文模式 - 中文
-    filtered = filtered.replace(/我注意到[^。！？\n]*?[。！？，,\n]/g, '')
-    filtered = filtered.replace(/我看到[^。！？\n]*?[。！？，,\n]/g, '')
-    filtered = filtered.replace(/需要我帮你[^。！？\n]*?[。！？\n]/g, '')
-    filtered = filtered.replace(/如果你需要[^。！？\n]*?[。！？\n]/g, '')
-    filtered = filtered.replace(/有关(?:这个|该)(?:脚本|项目|文件)[^。！？\n]*?[。！？\n]/g, '')
-
-    // Antigravity 身份模式 - 中文
-    filtered = filtered.replace(/我是\s*\*?\*?Antigravity\*?\*?[^。！\n]*?[。！\n]/gi, '')
-    filtered = filtered.replace(/由\s*Google\s*DeepMind[^。！\n]*?[。！\n]/gi, '')
-    filtered = filtered.replace(/一个由\s*Google[^。！\n]*?[。！\n]/gi, '')
-
-    // IDE 上下文模式 - 英文
-    filtered = filtered.replace(/I notice[^.!?\n]*?[.!?\n]/gi, '')
-    filtered = filtered.replace(/I see[^.!?\n]*?you[^.!?\n]*?[.!?\n]/gi, '')
-    filtered = filtered.replace(/If you need[^.!?\n]*?(?:script|project|file)[^.!?\n]*?[.!?\n]/gi, '')
-
-    // Antigravity 身份模式 - 英文
-    filtered = filtered.replace(/I(?:'m| am) Antigravity[^.!\n]*?[.!\n]/gi, '')
-    filtered = filtered.replace(/developed by Google DeepMind[^.!\n]*?[.!\n]/gi, '')
-
-    // 清理多余空行
-    filtered = filtered.replace(/\n{3,}/g, '\n\n').trim()
-
-    return filtered
-}
-
-/**
- * 调用本地 Language Server
- */
-async function callLanguageServer(
-    path: string,
-    body: Uint8Array
-): Promise<ArrayBuffer> {
-    const port = state.languageServerPort
-    const csrfToken = state.csrfToken
-
-    if (!port || !csrfToken) {
-        throw new AntigravityError(
-            "Language Server 信息未初始化，请确保 Antigravity 正在运行",
-            "language_server_not_found"
-        )
-    }
-
-    const url = `https://127.0.0.1:${port}${path}`
-    consola.debug("Calling Language Server:", url)
-    consola.debug("Port:", port, "CSRF:", csrfToken.slice(0, 10) + "...")
-
-    const response = await fetch(url, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/proto",
-            "Accept": "application/proto",
-            "x-codeium-csrf-token": csrfToken,
-            "connect-protocol-version": "1",
-        },
-        body: Buffer.from(body),
-    })
-
-    consola.debug("Response status:", response.status)
-
-    if (!response.ok) {
-        const errorText = await response.text()
-        consola.error("Language Server error:", response.status, errorText)
-        throw new Error(`Language Server 请求失败: ${response.status}`)
-    }
-
-    return await response.arrayBuffer()
-}
-
-/**
- * 获取 Cascade 轨迹 (包含 AI 回复)
- */
-async function getTrajectory(cascadeId: string): Promise<any> {
-    const port = state.languageServerPort
-    const csrfToken = state.csrfToken
-
-    if (!port || !csrfToken) {
-        throw new AntigravityError("Language Server 未初始化", "not_initialized")
-    }
-
-    const response = await fetch(`https://127.0.0.1:${port}/exa.language_server_pb.LanguageServerService/GetCascadeTrajectory`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "connect-protocol-version": "1",
-            "x-codeium-csrf-token": csrfToken,
-        },
-        body: JSON.stringify({ cascadeId }),
-    })
-
-    if (!response.ok) {
-        throw new Error(`GetCascadeTrajectory 失败: ${response.status}`)
-    }
-
-    return await response.json()
-}
-
-/**
- * 等待并提取最新的 AI 回复
- */
-async function waitForAIResponse(cascadeId: string, initialStepCount: number, maxWaitMs = 30000): Promise<string> {
-    const startTime = Date.now()
-    const pollInterval = 500
-
-    while (Date.now() - startTime < maxWaitMs) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval))
-
-        const trajectory = await getTrajectory(cascadeId)
-        const steps = trajectory.trajectory?.steps || []
-
-        // 检查是否有新的 PLANNER_RESPONSE
-        if (steps.length > initialStepCount) {
-            const newSteps = steps.slice(initialStepCount)
-
-            // 查找完成的 PLANNER_RESPONSE
-            for (let i = newSteps.length - 1; i >= 0; i--) {
-                const step = newSteps[i]
-                if (step.type === "CORTEX_STEP_TYPE_PLANNER_RESPONSE" &&
-                    step.status === "CORTEX_STEP_STATUS_DONE" &&
-                    step.plannerResponse?.response) {
-                    return step.plannerResponse.response
+    // 如果是数组，处理各种类型的块
+    if (Array.isArray(content)) {
+        const parts: string[] = []
+        for (const block of content) {
+            if (block.type === "text" && block.text) {
+                parts.push(block.text)
+            } else if (block.type === "tool_use") {
+                // 工具调用 - 格式化为可读文本
+                parts.push(`[Tool Call: ${block.name}]\n${JSON.stringify(block.input, null, 2)}`)
+            } else if (block.type === "tool_result") {
+                // 工具结果 - 提取内容
+                if (typeof block.content === "string") {
+                    parts.push(block.content)
+                } else if (Array.isArray(block.content)) {
+                    // 嵌套的 content 数组
+                    for (const item of block.content) {
+                        if (item.type === "text" && item.text) {
+                            parts.push(item.text)
+                        }
+                    }
                 }
             }
+        }
+        return parts.join("\n") || "[No text content]"
+    }
 
-            // 检查是否有 NOTIFY_USER (表示需要用户输入)
-            for (const step of newSteps) {
-                if (step.type === "CORTEX_STEP_TYPE_NOTIFY_USER" && step.notifyUser?.message) {
-                    return step.notifyUser.message
-                }
+    // 如果有 text 属性，返回它
+    if (content && typeof content.text === "string") {
+        return content.text
+    }
+
+    // 其他情况，尝试序列化
+    return JSON.stringify(content)
+}
+
+/**
+ * 清理 JSON Schema，移除 Antigravity API 不支持的字段
+ */
+function cleanJsonSchema(schema: any): any {
+    if (!schema || typeof schema !== "object") {
+        return schema
+    }
+
+    // 完整的不支持字段列表
+    const unsupportedFields = [
+        // JSON Schema 元数据
+        "$schema", "$id", "$ref", "$defs", "definitions", "$comment",
+        // 验证相关（Claude 不支持）
+        "exclusiveMinimum", "exclusiveMaximum", "minimum", "maximum",
+        "minLength", "maxLength", "pattern", "format",
+        "minItems", "maxItems", "uniqueItems", "minContains", "maxContains",
+        "minProperties", "maxProperties",
+        // 组合逻辑（Claude 不支持）
+        "additionalItems", "patternProperties", "dependencies", "dependentRequired", "dependentSchemas",
+        "propertyNames", "const", "contentMediaType", "contentEncoding", "contentSchema",
+        "if", "then", "else", "allOf", "anyOf", "oneOf", "not",
+        // 其他不支持
+        "title", "examples", "default", "readOnly", "writeOnly", "deprecated",
+        "additionalProperties", "unevaluatedItems", "unevaluatedProperties",
+    ]
+
+    const result: any = {}
+
+    for (const [key, value] of Object.entries(schema)) {
+        if (unsupportedFields.includes(key)) continue
+
+        if (key === "properties" && typeof value === "object" && value !== null) {
+            result[key] = {}
+            for (const [propKey, propValue] of Object.entries(value as Record<string, any>)) {
+                result[key][propKey] = cleanJsonSchema(propValue)
+            }
+        } else if (key === "items" && typeof value === "object") {
+            result[key] = cleanJsonSchema(value)
+        } else if (Array.isArray(value)) {
+            result[key] = value.map(item =>
+                typeof item === "object" ? cleanJsonSchema(item) : item
+            )
+        } else if (typeof value === "object" && value !== null) {
+            result[key] = cleanJsonSchema(value)
+        } else {
+            result[key] = value
+        }
+    }
+
+    return result
+}
+
+/**
+ * 转换 Claude 格式到 Antigravity 格式
+ */
+function claudeToAntigravity(
+    model: string,
+    messages: ClaudeMessage[],
+    tools?: ClaudeTool[],
+    maxTokens?: number
+): any {
+    // Antigravity API expects 'model' role instead of 'assistant'
+    const contents = messages.map((msg) => ({
+        role: msg.role === "assistant" ? "model" : msg.role,
+        parts: [{ text: extractTextContent(msg.content) }],
+    }))
+
+    const sessionId = generateStableSessionId(messages)
+
+    // 思考模型需要更多 tokens（思考过程会消耗一部分）
+    // gemini-3 和 gpt-oss 都是思考模型，需要足够的 tokens
+    let effectiveMaxTokens = maxTokens || 4096
+    if (model.includes("gemini-3") || model.includes("gpt-oss")) {
+        effectiveMaxTokens = Math.max(effectiveMaxTokens, 1000)
+    }
+
+    const generationConfig: any = {
+        maxOutputTokens: effectiveMaxTokens
+    }
+
+    // 使用 auth 中保存的 projectId
+    const projectId = state.cloudaicompanionProject || "unknown"
+
+    const request: any = {
+        model,
+        userAgent: "antigravity",
+        project: projectId,
+        requestId: `agent-${crypto.randomUUID()}`,
+        request: {
+            contents,
+            sessionId,
+        },
+    }
+
+    if (Object.keys(generationConfig).length > 0) {
+        request.request.generationConfig = generationConfig
+    }
+
+    // Claude 模型需要 toolConfig
+    if (model.includes("claude")) {
+        request.request.toolConfig = {
+            functionCallingConfig: {
+                mode: "VALIDATED"
             }
         }
     }
 
-    throw new Error("等待 AI 回复超时")
+    // 只有 Claude 模型支持工具
+    // Gemini 和 GPT 模型不传递 tools 避免 schema 验证错误
+    if (tools && tools.length > 0 && model.includes("claude")) {
+        request.request.tools = tools.map(tool => ({
+            functionDeclarations: [{
+                name: tool.name,
+                description: tool.description,
+                parameters: cleanJsonSchema(tool.input_schema)
+            }]
+        }))
+    }
+
+    return request
 }
 
 /**
- * 调用 Language Server SendUserCascadeMessage 并获取回复
+ * 解析 API 响应
  */
-export async function createChatCompletion(request: ChatRequest): Promise<ChatResponse> {
-    const cascadeId = await createFreshCascade()
+function parseApiResponse(rawResponse: string): ChatResponse {
+    let chunks: any[] = []
+    const trimmed = rawResponse.trim()
 
-    // 1. 获取当前 step 数量
-    const initialTrajectory = await getTrajectory(cascadeId)
-    const initialStepCount = initialTrajectory.trajectory?.steps?.length || 0
-    consola.debug("Initial step count:", initialStepCount)
+    if (trimmed.startsWith("[")) {
+        chunks = JSON.parse(trimmed)
+    } else if (trimmed.startsWith("{")) {
+        chunks = [JSON.parse(trimmed)]
+    }
 
-    // 2. 发送消息
-    const body = buildProtobufRequest(request, cascadeId)
-    consola.debug("Request body size:", body.length, "bytes")
+    if (chunks.length === 0) {
+        throw new Error("Empty response from API")
+    }
 
-    const responseData = await callLanguageServer(
-        "/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage",
-        body
-    )
-    consola.debug("Message queued, response size:", responseData.byteLength, "bytes")
+    const lastChunk = chunks[chunks.length - 1]
+    if (!lastChunk?.response) {
+        throw new Error("No valid response from Antigravity")
+    }
 
-    // 3. 轮询等待 AI 回复
-    consola.debug("Polling for AI response...")
-    const aiResponse = await waitForAIResponse(cascadeId, initialStepCount)
+    const contentBlocks: ContentBlock[] = []
+    let hasToolUse = false
 
-    // 4. 过滤 IDE 上下文泄露
-    const filteredResponse = filterIDEContext(aiResponse)
+    for (const chunk of chunks) {
+        const parts = chunk.response?.candidates?.[0]?.content?.parts || []
+        // Debug: 打印 parts 结构
+        if (parts.length > 0) {
+            // Debug logging removed for cleaner output
+        }
+        for (const part of parts) {
+            // 提取文本内容（不再跳过 thought，因为 Gemini 思考模型可能把内容放在 thought 中）
+            if (part.text) {
+                const lastBlock = contentBlocks[contentBlocks.length - 1]
+                if (lastBlock?.type === "text") {
+                    lastBlock.text = (lastBlock.text || "") + part.text
+                } else if (part.text) {
+                    contentBlocks.push({ type: "text", text: part.text })
+                }
+            }
+            if (part.functionCall) {
+                hasToolUse = true
+                contentBlocks.push({
+                    type: "tool_use",
+                    id: part.functionCall.id || `toolu_${crypto.randomUUID().slice(0, 8)}`,
+                    name: part.functionCall.name,
+                    input: part.functionCall.args || {}
+                })
+            }
+        }
+    }
+
+    if (contentBlocks.length === 0) {
+        contentBlocks.push({ type: "text", text: "" })
+    }
+
+    const usage = lastChunk.response.usageMetadata || lastChunk.usageMetadata
+    const inputTokens = usage?.promptTokenCount || 0
+    const outputTokens = (usage?.candidatesTokenCount || 0) + (usage?.thoughtsTokenCount || 0)
+
+    const finishReason = lastChunk.response.candidates?.[0]?.finishReason
+    let stopReason = "end_turn"
+    if (hasToolUse) {
+        stopReason = "tool_use"
+    } else if (finishReason === "MAX_TOKENS") {
+        stopReason = "max_tokens"
+    }
 
     return {
-        content: filteredResponse,
-        model: request.model,
-        stopReason: "end_turn",
-        usage: {
-            inputTokens: 0,
-            outputTokens: 0,
-        },
+        contentBlocks,
+        stopReason,
+        usage: { inputTokens, outputTokens },
     }
 }
 
 /**
- * 流式调用 - 发送消息并轮询回复（模拟流式）
- * 注意：为了过滤 IDE 上下文，需要先获取完整响应再模拟流式输出
+ * 发送请求
  */
-export async function* createChatCompletionStream(request: ChatRequest): AsyncGenerator<string> {
-    const cascadeId = await createFreshCascade()
+async function sendRequest(
+    endpoint: string,
+    antigravityRequest: any,
+    accessToken: string
+): Promise<string> {
+    let lastError: Error | null = null
 
-    // 获取初始 step 数量
-    const initialTrajectory = await getTrajectory(cascadeId)
-    const initialStepCount = initialTrajectory.trajectory?.steps?.length || 0
+    for (const baseUrl of ANTIGRAVITY_BASE_URLS) {
+        const url = `${baseUrl}${endpoint}`
+        consola.debug("Trying API:", url)
 
-    // 发送消息
-    const body = buildProtobufRequest(request, cascadeId)
-    await callLanguageServer(
-        "/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage",
-        body
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${accessToken}`,
+                    "User-Agent": DEFAULT_USER_AGENT,
+                    "Accept": "application/json",
+                },
+                body: JSON.stringify(antigravityRequest),
+            })
+
+            if (response.ok) {
+                consola.success("API request successful on:", baseUrl)
+                return await response.text()
+            }
+
+            const errorText = await response.text()
+            consola.warn(`API error on ${baseUrl}: ${response.status}`, errorText.substring(0, 300))
+            lastError = new Error(`Antigravity API error: ${response.status} ${errorText}`)
+            continue
+        } catch (e) {
+            consola.warn(`Request failed on ${baseUrl}:`, e)
+            lastError = e as Error
+            continue
+        }
+    }
+
+    throw lastError || new Error("All API endpoints failed")
+}
+
+/**
+ * 创建聊天完成（非流式）
+ */
+export async function createChatCompletion(request: ChatRequest): Promise<ChatResponse> {
+    const accessToken = await getAccessToken()
+
+    const antigravityRequest = claudeToAntigravity(
+        getAntigravityModelName(request.model),
+        request.messages,
+        request.tools,
+        request.maxTokens
     )
 
-    // 轮询等待完整回复
-    const startTime = Date.now()
-    const maxWaitMs = 60000
-    const pollInterval = 300
+    // Verbose request logging removed - use --verbose flag to enable
 
-    while (Date.now() - startTime < maxWaitMs) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval))
+    const rawResponse = await sendRequest(GENERATE_ENDPOINT, antigravityRequest, accessToken)
 
-        const trajectory = await getTrajectory(cascadeId)
-        const steps = trajectory.trajectory?.steps || []
+    // Debug: 打印原始响应的前2000字符用于调试
+    // Debug response logging removed
 
-        if (steps.length > initialStepCount) {
-            const newSteps = steps.slice(initialStepCount)
+    return parseApiResponse(rawResponse)
+}
 
-            for (const step of newSteps) {
-                if (step.type === "CORTEX_STEP_TYPE_PLANNER_RESPONSE" &&
-                    step.status === "CORTEX_STEP_STATUS_DONE" &&
-                    step.plannerResponse?.response) {
+/**
+ * 创建流式聊天完成
+ */
+export async function* createChatCompletionStream(
+    request: ChatRequest
+): AsyncGenerator<string, void, unknown> {
+    const accessToken = await getAccessToken()
 
-                    // 获取完整响应并过滤 IDE 上下文
-                    const fullResponse = filterIDEContext(step.plannerResponse.response)
+    const antigravityRequest = claudeToAntigravity(
+        getAntigravityModelName(request.model),
+        request.messages,
+        request.tools,
+        request.maxTokens
+    )
 
-                    // 模拟流式输出（分块返回）
-                    const chunkSize = 20  // 每次输出约 20 个字符
-                    for (let i = 0; i < fullResponse.length; i += chunkSize) {
-                        yield fullResponse.slice(i, i + chunkSize)
-                    }
-                    return
-                }
-            }
+    // Verbose request logging removed
+
+    const rawResponse = await sendRequest(STREAM_ENDPOINT, antigravityRequest, accessToken)
+    const conversionState = createConversionState()
+
+    let chunks: any[] = []
+    const trimmed = rawResponse.trim()
+
+    if (trimmed.startsWith("[")) {
+        chunks = JSON.parse(trimmed)
+    } else if (trimmed.startsWith("{")) {
+        chunks = [JSON.parse(trimmed)]
+    }
+
+    for (const chunk of chunks) {
+        const events = antigravityToClaudeSSE(chunk, conversionState)
+        for (const event of events) {
+            yield event
         }
     }
 }
