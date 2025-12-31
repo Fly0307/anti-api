@@ -175,12 +175,22 @@
             animation: claude-breathe 2s ease-in-out infinite;
         }
 
-        /* Refresh 按钮 - Gemini 蓝色霓虹 */
-        #refresh-container.active button {
+        /* Remote 按钮 - Gemini 蓝色霓虹 */
+        #remote-btn:hover {
             background: rgba(71, 150, 227, 0.15);
             border-color: var(--gemini-blue);
             backdrop-filter: blur(20px);
-            animation: gemini-breathe 2s ease-in-out infinite;
+            box-shadow: 0 0 20px rgba(71, 150, 227, 0.4),
+                0 0 40px rgba(71, 150, 227, 0.2);
+        }
+
+        /* Refresh 按钮 - 白色霓虹 */
+        #refresh-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: var(--white-glow);
+            backdrop-filter: blur(20px);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.4),
+                0 0 40px rgba(255, 255, 255, 0.2);
         }
 
         .progress-bar {
@@ -226,10 +236,10 @@
             <div class="text-right">
                 <div class="flex items-center gap-3 justify-end">
                     <div class="refresh-btn inline-block">
-                        <a href="/remote-panel" id="remote-btn"
-                            class="px-4 py-1.5 rounded-lg font-bold text-gray-300 text-sm inline-block">
+                        <button onclick="window.open('/remote-panel', '_blank')" id="remote-btn"
+                            class="px-4 py-1.5 rounded-lg font-bold text-gray-300 text-sm">
                             Remote(Beta)
-                        </a>
+                        </button>
                     </div>
                     <div class="refresh-btn inline-block" id="logout-container">
                         <button onclick="handleLogout()" id="logout-btn"
@@ -594,7 +604,7 @@
                     loginContainer.style.display = 'none';
                     logoutContainer.style.display = 'block';
                     // 显示账号信息
-                    planInfo.innerHTML = `<span class="text-green-400">✓ ${data.email || 'Logged in'}</span> <span class="text-gray-600 text-xs">• Anti-API •</span> <span class="text-gray-600 text-xs">Click to copy model ID</span>`;
+                    planInfo.innerHTML = `<span class="text-white">✓ ${data.email || 'Logged in'}</span> <span class="text-gray-600">•</span> <span class="text-white">Pro Plan</span> <span class="text-gray-600">•</span> <span class="text-blue-400">Beta</span>`;
                 } else {
                     loginContainer.style.display = 'block';
                     logoutContainer.style.display = 'none';

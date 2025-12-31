@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
@@ -168,17 +168,9 @@
     <!-- Main Content -->
     <div class="max-w-7xl mx-auto">
         <!-- Header -->
-        <div class="mb-6 flex items-center justify-between">
-            <div>
-                <h1 class="text-3xl font-bold text-gray-300">Anti-API Remote Dashboard</h1>
-                <p id="plan-info" class="text-gray-500 text-sm font-bold mt-1">Loading...</p>
-            </div>
-            <div class="refresh-btn">
-                <a href="/quota" class="px-4 py-2 rounded-lg font-bold text-gray-300 text-sm inline-block"
-                    style="background: rgba(17, 17, 17, 0.9); border: 1px solid rgba(59, 42, 84, 0.3);">
-                    ← Quota Dashboard
-                </a>
-            </div>
+        <div class="mb-6">
+            <h1 class="text-3xl font-bold text-gray-300">Anti-API Remote Dashboard</h1>
+            <p id="plan-info" class="text-gray-500 text-sm font-bold mt-1">Loading...</p>
         </div>
 
         <!-- Usage Instructions -->
@@ -234,7 +226,7 @@
                             </button>
                         </div>
                     </div>
-                    <div id="ngrok-status" class="text-xs text-gray-500 truncate">未启动</div>
+                    <div id="ngrok-status" class="text-xs text-gray-500 truncate">Not started</div>
                 </div>
             </div>
 
@@ -262,7 +254,7 @@
                             </button>
                         </div>
                     </div>
-                    <div id="cloudflared-status" class="text-xs text-gray-500 truncate">未启动</div>
+                    <div id="cloudflared-status" class="text-xs text-gray-500 truncate">Not started</div>
                 </div>
             </div>
 
@@ -270,7 +262,7 @@
             <div class="card-3d h-full" data-type="localtunnel">
                 <div class="card-inner rounded-xl p-4 h-full" id="localtunnel-card">
                     <p class="text-white text-lg font-bold mb-2">localtunnel</p>
-                    <input type="text" id="localtunnel-subdomain" placeholder="Subdomain (可选)"
+                    <input type="text" id="localtunnel-subdomain" placeholder="Subdomain (optional)"
                         class="w-full px-2 py-1 rounded text-white text-xs mb-3"
                         style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);">
                     <div class="flex gap-2 mb-3">
@@ -299,7 +291,7 @@
                             </button>
                         </div>
                     </div>
-                    <div id="localtunnel-status" class="text-xs text-gray-500 truncate">未启动</div>
+                    <div id="localtunnel-status" class="text-xs text-gray-500 truncate">Not started</div>
                 </div>
             </div>
         </div>
@@ -329,9 +321,9 @@
             try {
                 const res = await fetch(`${API_BASE}/remote/public-ip`);
                 const data = await res.json();
-                showToast(`你的公网IP: ${data.ip}`);
+                showToast(`Your public IP: ${data.ip}`);
             } catch (error) {
-                showToast('获取IP失败', true);
+                showToast('Failed to get IP', true);
             }
         }
 
@@ -343,7 +335,7 @@
             const card = document.querySelector(`.card-3d[data-type="${type}"]`);
 
             startBtn.disabled = true;
-            statusDiv.textContent = '启动中...';
+            statusDiv.textContent = 'Starting...';
 
             try {
                 const body = {};
@@ -370,14 +362,14 @@
                     card.classList.add('active');
                     stopBtn.disabled = false;
                     copyBtn.disabled = false;
-                    showToast(`${type} 启动成功`);
+                    showToast(`${type} started`);
                 } else if (data.active && !data.url) {
-                    statusDiv.textContent = '启动中，等待URL...';
+                    statusDiv.textContent = 'Starting, waiting for URL...';
                     setTimeout(() => refreshStatus(), 2000);
                 } else {
-                    statusDiv.textContent = `✗ ${data.error || '启动失败'}`;
+                    statusDiv.textContent = `✗ ${data.error || 'Failed to start'}`;
                     startBtn.disabled = false;
-                    showToast(data.error || '启动失败', true);
+                    showToast(data.error || 'Failed to start', true);
                 }
             } catch (error) {
                 statusDiv.textContent = `✗ ${error.message}`;
@@ -396,7 +388,7 @@
             try {
                 await fetch(`${API_BASE}/remote/${type}/stop`, { method: 'POST' });
                 tunnelUrls[type] = null;
-                statusDiv.textContent = '未启动';
+                statusDiv.textContent = 'Not started';
                 card.classList.remove('active');
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
@@ -409,14 +401,14 @@
         async function copyUrl(type) {
             const url = tunnelUrls[type];
             if (!url) {
-                showToast('没有可复制的URL', true);
+                showToast('No URL to copy', true);
                 return;
             }
             try {
                 await navigator.clipboard.writeText(url);
-                showToast('URL已复制到剪贴板');
+                showToast('URL copied to clipboard');
             } catch (error) {
-                showToast('复制失败', true);
+                showToast('Copy failed', true);
             }
         }
 
@@ -440,11 +432,11 @@
                         stopBtn.disabled = false;
                         copyBtn.disabled = false;
                     } else if (status.active && !status.url) {
-                        statusDiv.textContent = '启动中，等待URL...';
+                        statusDiv.textContent = 'Starting, waiting for URL...';
                         startBtn.disabled = true;
                     } else {
                         tunnelUrls[type] = null;
-                        statusDiv.textContent = '未启动';
+                        statusDiv.textContent = 'Not started';
                         card.classList.remove('active');
                         startBtn.disabled = false;
                         stopBtn.disabled = true;
@@ -523,6 +515,12 @@
         setInterval(refreshStatus, 5000);
         init3DEffect();
     </script>
+
+    <!-- Footer -->
+    <div class="max-w-7xl mx-auto mt-8 text-center">
+        <p class="text-gray-600 text-sm">© 2025 Silas · <a href="https://github.com/ink1ing/anti-api" target="_blank"
+                class="text-gray-500 hover:text-gray-400">github.com/ink1ing/anti-api</a></p>
+    </div>
 </body>
 
 </html>

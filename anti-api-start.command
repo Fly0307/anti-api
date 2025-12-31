@@ -27,12 +27,15 @@ if lsof -i :$PORT > /dev/null 2>&1; then
     echo "端口已释放."
 fi
 
+# 加载 bun 路径（如果已安装）
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
 # 检查 bun
 if ! command -v bun &> /dev/null; then
     echo "安装 Bun..."
     curl -fsSL https://bun.sh/install | bash
-    export BUN_INSTALL="$HOME/.bun"
-    export PATH="$BUN_INSTALL/bin:$PATH"
+    source "$HOME/.bun/bun.sh" 2>/dev/null || true
 fi
 
 # 安装依赖

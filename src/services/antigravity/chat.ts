@@ -443,6 +443,7 @@ export async function createChatCompletion(request: ChatRequest): Promise<ChatRe
 
 /**
  * 创建流式聊天完成
+ * 完整实现 Claude Code 兼容的 SSE 事件流
  */
 export async function* createChatCompletionStream(
     request: ChatRequest
@@ -456,10 +457,7 @@ export async function* createChatCompletionStream(
         request.maxTokens
     )
 
-    // Verbose request logging removed
-
     const rawResponse = await sendRequest(STREAM_ENDPOINT, antigravityRequest, accessToken)
-    const conversionState = createConversionState()
 
     let chunks: any[] = []
     const trimmed = rawResponse.trim()
@@ -470,10 +468,139 @@ export async function* createChatCompletionStream(
         chunks = [JSON.parse(trimmed)]
     }
 
+    // 状态跟踪
+    let hasFirstResponse = false
+    let responseType = 0  // 0=none, 1=text, 2=thinking, 3=tool_use
+    let blockIndex = 0
+    let hasToolUse = false
+    let inputTokens = 0
+    let outputTokens = 0
+
     for (const chunk of chunks) {
-        const events = antigravityToClaudeSSE(chunk, conversionState)
-        for (const event of events) {
-            yield event
+        const parts = chunk.response?.candidates?.[0]?.content?.parts || []
+
+        // 第一个响应发送 message_start
+        if (!hasFirstResponse) {
+            const messageStart = {
+                type: "message_start",
+                message: {
+                    id: `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+                    type: "message",
+                    role: "assistant",
+                    content: [],
+                    model: request.model,
+                    stop_reason: null,
+                    stop_sequence: null,
+                    usage: { input_tokens: 0, output_tokens: 0 }
+                }
+            }
+            yield `event: message_start\ndata: ${JSON.stringify(messageStart)}\n\n`
+            hasFirstResponse = true
+        }
+
+        for (const part of parts) {
+            // 处理文本内容
+            if (part.text && !part.thought) {
+                if (responseType !== 1) {
+                    // 关闭之前的块
+                    if (responseType !== 0) {
+                        yield `event: content_block_stop\ndata: {"type":"content_block_stop","index":${blockIndex}}\n\n`
+                        blockIndex++
+                    }
+                    // 开始新的文本块
+                    yield `event: content_block_start\ndata: {"type":"content_block_start","index":${blockIndex},"content_block":{"type":"text","text":""}}\n\n`
+                    responseType = 1
+                }
+                // 发送文本 delta
+                const textDelta = {
+                    type: "content_block_delta",
+                    index: blockIndex,
+                    delta: { type: "text_delta", text: part.text }
+                }
+                yield `event: content_block_delta\ndata: ${JSON.stringify(textDelta)}\n\n`
+            }
+
+            // 处理 thinking 内容
+            if (part.text && part.thought) {
+                if (responseType !== 2) {
+                    if (responseType !== 0) {
+                        yield `event: content_block_stop\ndata: {"type":"content_block_stop","index":${blockIndex}}\n\n`
+                        blockIndex++
+                    }
+                    yield `event: content_block_start\ndata: {"type":"content_block_start","index":${blockIndex},"content_block":{"type":"thinking","thinking":""}}\n\n`
+                    responseType = 2
+                }
+                const thinkingDelta = {
+                    type: "content_block_delta",
+                    index: blockIndex,
+                    delta: { type: "thinking_delta", thinking: part.text }
+                }
+                yield `event: content_block_delta\ndata: ${JSON.stringify(thinkingDelta)}\n\n`
+            }
+
+            // 处理工具调用
+            if (part.functionCall) {
+                hasToolUse = true
+
+                // 关闭之前的块
+                if (responseType !== 0) {
+                    yield `event: content_block_stop\ndata: {"type":"content_block_stop","index":${blockIndex}}\n\n`
+                    blockIndex++
+                }
+
+                const toolId = part.functionCall.id || `toolu_${Date.now()}_${blockIndex}`
+                const toolName = part.functionCall.name
+                const toolInput = part.functionCall.args || {}
+
+                // 开始工具使用块
+                const toolStart = {
+                    type: "content_block_start",
+                    index: blockIndex,
+                    content_block: {
+                        type: "tool_use",
+                        id: toolId,
+                        name: toolName,
+                        input: {}
+                    }
+                }
+                yield `event: content_block_start\ndata: ${JSON.stringify(toolStart)}\n\n`
+
+                // 发送工具输入
+                if (Object.keys(toolInput).length > 0) {
+                    const inputDelta = {
+                        type: "content_block_delta",
+                        index: blockIndex,
+                        delta: { type: "input_json_delta", partial_json: JSON.stringify(toolInput) }
+                    }
+                    yield `event: content_block_delta\ndata: ${JSON.stringify(inputDelta)}\n\n`
+                }
+
+                responseType = 3
+            }
+        }
+
+        // 提取 usage
+        const usage = chunk.response?.usageMetadata
+        if (usage) {
+            inputTokens = usage.promptTokenCount || 0
+            outputTokens = (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0)
         }
     }
+
+    // 关闭最后的内容块
+    if (responseType !== 0) {
+        yield `event: content_block_stop\ndata: {"type":"content_block_stop","index":${blockIndex}}\n\n`
+    }
+
+    // 发送 message_delta
+    const stopReason = hasToolUse ? "tool_use" : "end_turn"
+    const messageDelta = {
+        type: "message_delta",
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { output_tokens: outputTokens }
+    }
+    yield `event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`
+
+    // 发送 message_stop
+    yield `event: message_stop\ndata: {"type":"message_stop"}\n\n`
 }
