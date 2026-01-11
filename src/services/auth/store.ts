@@ -13,6 +13,7 @@ interface StoredAuthFile {
     email?: string
     login?: string
     label?: string
+    auth_source?: string
     access_token: string
     refresh_token?: string
     expires_at?: number
@@ -89,6 +90,7 @@ function loadAccountFromFile(path: string): ProviderAccount | null {
             refreshToken: raw.refresh_token,
             expiresAt: raw.expires_at,
             projectId: raw.project_id,
+            authSource: raw.auth_source as ProviderAccount["authSource"],
             createdAt: raw.created_at,
             updatedAt: raw.updated_at,
         }
@@ -111,6 +113,7 @@ function writeAccountFile(account: ProviderAccount): void {
         email: account.email,
         login: account.login,
         label: account.label,
+        auth_source: account.authSource,
         access_token: account.accessToken,
         refresh_token: account.refreshToken,
         expires_at: account.expiresAt,

@@ -16,6 +16,7 @@ import { routingRouter } from "./routes/routing/route"
 import { AVAILABLE_MODELS } from "./lib/config"
 import { getAggregatedQuota } from "./services/quota-aggregator"
 import { initAuth, isAuthenticated } from "./services/antigravity/login"
+import { accountManager } from "./services/antigravity/account-manager"
 import consola from "consola"
 
 export const server = new Hono()
@@ -26,6 +27,7 @@ server.use(cors())
 
 // 启动时自动加载已保存的认证
 initAuth()
+accountManager.load()
 
 // 根路径 - 重定向到配额面板
 server.get("/", (c) => c.redirect("/quota"))

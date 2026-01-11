@@ -78,7 +78,8 @@
         }
 
         .drop-slot {
-            min-width: 120px;
+            width: 100%;
+            min-height: 72px;
             border: 1px dashed rgba(255, 255, 255, 0.1);
             border-radius: 12px;
             padding: 12px 16px;
@@ -210,23 +211,23 @@
 
         .flow-port {
             position: absolute;
-            top: 50%;
+            left: 50%;
             width: 10px;
             height: 10px;
             border-radius: 999px;
             background: rgba(10, 10, 10, 0.9);
             border: 1px solid rgba(110, 231, 255, 0.6);
             box-shadow: 0 0 10px rgba(110, 231, 255, 0.4);
-            transform: translateY(-50%);
+            transform: translateX(-50%);
             pointer-events: none;
         }
 
-        .flow-port-left {
-            left: -6px;
+        .flow-port-top {
+            top: -6px;
         }
 
-        .flow-port-right {
-            right: -6px;
+        .flow-port-bottom {
+            bottom: -6px;
         }
 
         .flow-line-core {
@@ -271,7 +272,7 @@
                 <div class="action-wrap inline-block">
                     <button onclick="saveRouting()" id="save-btn"
                         class="action-btn px-4 py-2 rounded-lg font-bold text-gray-300 text-sm">
-                        Save
+                        Save Flow
                     </button>
                 </div>
                 <div class="action-wrap inline-block">
@@ -289,7 +290,7 @@
             </div>
         </header>
 
-        <div class="grid lg:grid-cols-[320px_1fr] gap-6">
+        <div class="grid lg:grid-cols-3 gap-6">
             <aside class="panel rounded-2xl p-4 space-y-4">
                 <div>
                     <h2 class="text-sm uppercase tracking-[0.2em] text-gray-500">Accounts</h2>
@@ -300,32 +301,151 @@
 
             <section class="relative panel rounded-2xl p-6 min-h-[500px] grid-bg overflow-hidden">
                 <div class="relative z-10">
-                    <div class="flex items-center justify-between mb-4">
-                        <h2 class="text-sm uppercase tracking-[0.2em] text-gray-500">Flow</h2>
-                        <div id="save-status" class="text-xs text-gray-500"></div>
+                    <div class="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                            <h2 class="text-sm uppercase tracking-[0.2em] text-gray-500">Flow</h2>
+                            <p class="text-xs text-gray-600 mt-1">Match by model name in requests.</p>
+                        </div>
+                        <div class="text-right space-y-1">
+                            <input id="flow-name" placeholder="Flow name"
+                                class="bg-transparent border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-cyan-300"
+                                autocomplete="off" />
+                            <div id="save-status" class="text-xs text-gray-500"></div>
+                        </div>
                     </div>
                     <div id="flow-canvas"
-                        class="flow-canvas flex items-center gap-4 flex-nowrap overflow-x-auto min-h-[200px]"></div>
+                        class="flow-canvas flex flex-col gap-4 overflow-y-auto min-h-[240px]"></div>
                 </div>
             </section>
+
+            <aside class="panel rounded-2xl p-4 space-y-4">
+                <div>
+                    <h2 class="text-sm uppercase tracking-[0.2em] text-gray-500">Saved</h2>
+                    <p class="text-xs text-gray-600 mt-1">Load, rename, or delete saved flows.</p>
+                </div>
+                <div id="saved-list" class="space-y-3"></div>
+            </aside>
         </div>
     </div>
 
     <script>
         const API_BASE = 'http://localhost:8964';
+        const ACTIVE_FLOW_KEY = 'anti-api-active-flow';
         let accounts = {};
         let models = {};
+        let flows = [];
         let flowEntries = [];
+        let activeFlowId = null;
 
         async function loadRouting() {
             const response = await fetch(`${API_BASE}/routing/config`);
             const data = await response.json();
             accounts = data.accounts || {};
             models = data.models || {};
-            flowEntries = data.config?.entries || [];
+            flows = Array.isArray(data.config?.flows) ? data.config.flows : [];
+
+            const savedFlowId = localStorage.getItem(ACTIVE_FLOW_KEY);
+            const initialFlow = flows.find(flow => flow.id === savedFlowId) || flows[0] || null;
+            setActiveFlow(initialFlow);
             renderAccounts();
-            renderFlow();
             bindCanvasEvents();
+        }
+
+        function cloneEntries(entries) {
+            return (entries || []).map(entry => ({ ...entry }));
+        }
+
+        function setActiveFlow(flow) {
+            activeFlowId = flow ? flow.id : null;
+            flowEntries = flow ? cloneEntries(flow.entries) : [];
+
+            const nameInput = document.getElementById('flow-name');
+            if (nameInput) {
+                nameInput.value = flow?.name || '';
+            }
+
+            if (activeFlowId) {
+                localStorage.setItem(ACTIVE_FLOW_KEY, activeFlowId);
+            } else {
+                localStorage.removeItem(ACTIVE_FLOW_KEY);
+            }
+
+            renderFlow();
+            renderSavedFlows();
+        }
+
+        function renderSavedFlows() {
+            const container = document.getElementById('saved-list');
+            if (!container) return;
+            container.innerHTML = '';
+
+            if (flows.length === 0) {
+                container.innerHTML = `<div class="text-xs text-gray-500">No saved flows yet.</div>`;
+                return;
+            }
+
+            flows.forEach(flow => {
+                const card = document.createElement('div');
+                const isActive = flow.id === activeFlowId;
+                card.className = `node node-palette rounded-xl px-3 py-3 text-xs space-y-2 ${isActive ? 'border-cyan-300/70 shadow-[0_0_18px_rgba(110,231,255,0.25)]' : ''}`;
+
+                const header = document.createElement('div');
+                header.className = 'flex items-center justify-between';
+                header.innerHTML = `
+                    <div class="text-sm font-semibold text-gray-200">${flow.name}</div>
+                    <span class="account-pill text-[10px] px-2 py-0.5 rounded-full">${flow.entries?.length || 0} hops</span>
+                `;
+                card.appendChild(header);
+
+                const hint = document.createElement('div');
+                hint.className = 'text-[10px] text-gray-500';
+                hint.textContent = isActive ? 'Editing' : 'Click to load';
+                card.appendChild(hint);
+
+                const actions = document.createElement('div');
+                actions.className = 'flex items-center gap-3 text-[10px] text-gray-400';
+
+                const loadBtn = document.createElement('button');
+                loadBtn.textContent = isActive ? 'Loaded' : 'Load';
+                loadBtn.disabled = isActive;
+                loadBtn.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    setActiveFlow(flow);
+                });
+                actions.appendChild(loadBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = 'Delete';
+                deleteBtn.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    deleteFlow(flow.id);
+                });
+                actions.appendChild(deleteBtn);
+
+                card.appendChild(actions);
+                card.addEventListener('click', () => setActiveFlow(flow));
+                container.appendChild(card);
+            });
+        }
+
+        function newFlow() {
+            activeFlowId = null;
+            flowEntries = [];
+            const nameInput = document.getElementById('flow-name');
+            if (nameInput) {
+                nameInput.value = '';
+            }
+            localStorage.removeItem(ACTIVE_FLOW_KEY);
+            renderFlow();
+            renderSavedFlows();
+        }
+
+        async function deleteFlow(flowId) {
+            flows = flows.filter(flow => flow.id !== flowId);
+            if (activeFlowId === flowId) {
+                newFlow();
+            }
+            await persistRoutingConfig();
         }
 
         function renderAccounts() {
@@ -390,7 +510,7 @@
 
             flowEntries.forEach((entry, i) => {
                 const node = document.createElement('div');
-                node.className = 'node flow-node rounded-2xl px-4 py-3 text-sm min-w-[200px] cursor-grab';
+                node.className = 'node flow-node rounded-2xl px-4 py-3 text-sm cursor-grab';
                 node.draggable = true;
                 node.dataset.sourceIndex = i;
                 node.dataset.flowIndex = i;
@@ -407,8 +527,8 @@
                     <div class="text-sm font-semibold text-gray-200 mt-1">${entry.label}</div>
                     <div class="text-[10px] text-gray-500 mt-2">fallback on 429</div>
                     <button class="text-[10px] text-gray-500 mt-2" onclick="removeEntry(${i})">Remove</button>
-                    <span class="flow-port flow-port-left"></span>
-                    <span class="flow-port flow-port-right"></span>
+                    <span class="flow-port flow-port-top"></span>
+                    <span class="flow-port flow-port-bottom"></span>
                 `;
                 canvas.appendChild(node);
             });
@@ -518,12 +638,35 @@
 
         async function saveRouting() {
             const status = document.getElementById('save-status');
+            const nameInput = document.getElementById('flow-name');
+            const flowName = nameInput ? nameInput.value.trim() : '';
+
+            if (!flowName) {
+                status.textContent = 'Flow name required';
+                setTimeout(() => status.textContent = '', 2000);
+                return;
+            }
+
+            const existingByName = flows.find(flow => flow.name === flowName && flow.id !== activeFlowId);
+            if (existingByName) {
+                status.textContent = 'Flow name already exists';
+                setTimeout(() => status.textContent = '', 2000);
+                return;
+            }
+
+            const flowId = activeFlowId || crypto.randomUUID();
+            const flow = { id: flowId, name: flowName, entries: flowEntries };
+            const index = flows.findIndex(existing => existing.id === flowId);
+
+            if (index >= 0) {
+                flows[index] = flow;
+            } else {
+                flows.push(flow);
+            }
+
+            activeFlowId = flowId;
             status.textContent = 'Saving...';
-            await fetch(`${API_BASE}/routing/config`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entries: flowEntries })
-            });
+            await persistRoutingConfig();
             status.textContent = 'Saved';
             setTimeout(() => status.textContent = '', 2000);
         }
@@ -539,6 +682,18 @@
                 flowEntries.push(first);
                 renderFlow();
             }
+        }
+
+        async function persistRoutingConfig() {
+            const response = await fetch(`${API_BASE}/routing/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ flows })
+            });
+            const data = await response.json();
+            flows = Array.isArray(data.config?.flows) ? data.config.flows : flows;
+            const active = flows.find(flow => flow.id === activeFlowId) || null;
+            setActiveFlow(active);
         }
 
         function bindCanvasEvents() {
@@ -592,8 +747,8 @@
             for (let i = 0; i < nodes.length - 1; i++) {
                 const current = nodes[i];
                 const next = nodes[i + 1];
-                const startPort = current.querySelector('.flow-port-right');
-                const endPort = next.querySelector('.flow-port-left');
+                const startPort = current.querySelector('.flow-port-bottom');
+                const endPort = next.querySelector('.flow-port-top');
                 if (!startPort || !endPort) continue;
 
                 const startRect = startPort.getBoundingClientRect();
@@ -602,9 +757,9 @@
                 const startY = startRect.top - canvasRect.top + scrollTop + startRect.height / 2;
                 const endX = endRect.left - canvasRect.left + scrollLeft + endRect.width / 2;
                 const endY = endRect.top - canvasRect.top + scrollTop + endRect.height / 2;
-                const curve = Math.max(40, Math.min(180, Math.abs(endX - startX) * 0.5));
+                const curve = Math.max(40, Math.min(180, Math.abs(endY - startY) * 0.5));
 
-                const path = `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`;
+                const path = `M ${startX} ${startY} C ${startX} ${startY + curve}, ${endX} ${endY - curve}, ${endX} ${endY}`;
                 paths += `<path class="flow-line-glow" d="${path}"></path>`;
                 paths += `<path class="flow-line-core" d="${path}"></path>`;
             }

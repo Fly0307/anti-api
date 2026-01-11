@@ -97,6 +97,47 @@ function cleanJsonSchema(schema: any): any {
     return result
 }
 
+function normalizeToolParameters(schema: unknown): any {
+    if (!schema) {
+        return { type: "object", properties: {} }
+    }
+
+    let normalized: any = schema
+    if (typeof schema === "string") {
+        const trimmed = schema.trim()
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+                normalized = JSON.parse(trimmed)
+            } catch {
+                return { type: "object", properties: {} }
+            }
+        } else {
+            return { type: "object", properties: {} }
+        }
+    }
+
+    if (typeof normalized !== "object" || normalized === null || Array.isArray(normalized)) {
+        return { type: "object", properties: {} }
+    }
+
+    normalized = cleanJsonSchema(normalized)
+    if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) {
+        return { type: "object", properties: {} }
+    }
+
+    if (normalized.type !== "object") {
+        normalized.type = "object"
+    }
+    if (!normalized.properties || typeof normalized.properties !== "object" || Array.isArray(normalized.properties)) {
+        normalized.properties = {}
+    }
+    if (normalized.required && !Array.isArray(normalized.required)) {
+        delete normalized.required
+    }
+
+    return normalized
+}
+
 function buildSafetySettings(): any[] {
     return [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
@@ -142,7 +183,7 @@ function claudeToAntigravity(model: string, messages: ClaudeMessage[], tools?: C
             functionDeclarations: [{
                 name: tool.name,
                 description: tool.description,
-                parameters: cleanJsonSchema(tool.input_schema)
+                parameters: normalizeToolParameters(tool.input_schema)
             }]
         }))
     }
@@ -291,6 +332,9 @@ async function sendRequestSse(
             if (attempt < MAX_RETRY_ATTEMPTS - 1) continue
         }
         break
+    }
+    if (lastStatusCode > 0) {
+        throw new UpstreamError("antigravity", lastStatusCode, lastErrorText, lastRetryAfterHeader)
     }
     throw lastError || new Error("All endpoints failed")
 }

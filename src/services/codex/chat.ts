@@ -1,7 +1,7 @@
 import consola from "consola"
 import { authStore } from "~/services/auth/store"
 import { UpstreamError } from "~/lib/error"
-import { refreshCodexAccessToken } from "~/services/codex/oauth"
+import { refreshCodexAccountIfNeeded } from "~/services/codex/oauth"
 import type { ProviderAccount } from "~/services/auth/types"
 import type { ClaudeMessage, ClaudeTool } from "~/lib/translator"
 import { toOpenAIMessages, toOpenAITools } from "~/services/providers/openai-adapter"
@@ -24,13 +24,7 @@ export async function createCodexCompletion(
     tools?: ClaudeTool[],
     maxTokens?: number
 ) {
-    const now = Date.now()
-    if (account.expiresAt && account.refreshToken && account.expiresAt <= now + 60_000) {
-        const refreshed = await refreshCodexAccessToken(account.refreshToken)
-        account.accessToken = refreshed.accessToken
-        account.expiresAt = refreshed.expiresIn ? now + refreshed.expiresIn * 1000 : undefined
-        authStore.saveAccount(account)
-    }
+    const effectiveAccount = await refreshCodexAccountIfNeeded(account)
 
     const requestBody = {
         model,
@@ -43,7 +37,7 @@ export async function createCodexCompletion(
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${account.accessToken}`,
+            Authorization: `Bearer ${effectiveAccount.accessToken}`,
         },
         body: JSON.stringify(requestBody),
     })
@@ -74,7 +68,7 @@ export async function createCodexCompletion(
         contentBlocks.push({ type: "text" as const, text: content })
     }
 
-    authStore.markSuccess("codex", account.id)
+    authStore.markSuccess("codex", effectiveAccount.id)
 
     return {
         contentBlocks,

@@ -2,7 +2,7 @@ import consola from "consola"
 import https from "https"
 import { authStore } from "~/services/auth/store"
 import { refreshAccessToken } from "~/services/antigravity/oauth"
-import { refreshCodexAccessToken } from "~/services/codex/oauth"
+import { refreshCodexAccessToken, refreshCodexAccountIfNeeded } from "~/services/codex/oauth"
 import { accountManager } from "~/services/antigravity/account-manager"
 import type { ProviderAccount } from "~/services/auth/types"
 
@@ -257,21 +257,7 @@ async function fetchCodexQuotas(accounts: ProviderAccount[]): Promise<AccountQuo
 }
 
 async function refreshCodexIfNeeded(account: ProviderAccount): Promise<ProviderAccount> {
-    if (!account.refreshToken) {
-        return account
-    }
-    if (!account.expiresAt || account.expiresAt > Date.now() + 60_000) {
-        return account
-    }
-
-    const refreshed = await refreshCodexAccessToken(account.refreshToken)
-    const updated = {
-        ...account,
-        accessToken: refreshed.accessToken,
-        expiresAt: refreshed.expiresIn ? Date.now() + refreshed.expiresIn * 1000 : account.expiresAt,
-    }
-    authStore.saveAccount(updated)
-    return updated
+    return refreshCodexAccountIfNeeded(account)
 }
 
 async function fetchCodexUsage(account: ProviderAccount): Promise<AccountBar[]> {
@@ -284,8 +270,11 @@ async function fetchCodexUsage(account: ProviderAccount): Promise<AccountBar[]> 
     })
 
     if (response.status === 401 && account.refreshToken) {
-        const refreshed = await refreshCodexAccessToken(account.refreshToken)
+        const refreshed = await refreshCodexAccessToken(account.refreshToken, account.authSource)
         account.accessToken = refreshed.accessToken
+        if (refreshed.expiresIn) {
+            account.expiresAt = Date.now() + refreshed.expiresIn * 1000
+        }
         authStore.saveAccount(account)
         return fetchCodexUsage(account)
     }

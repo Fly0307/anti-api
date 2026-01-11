@@ -7,7 +7,7 @@ import { isAuthenticated, getUserInfo, setAuth, clearAuth, startOAuthLogin } fro
 import { accountManager } from "~/services/antigravity/account-manager"
 import { state } from "~/lib/state"
 import { authStore } from "~/services/auth/store"
-import { importCodexAuthFile, startCodexOAuthSession, pollCodexOAuthSession } from "~/services/codex/oauth"
+import { debugCodexOAuth, importCodexAuthSources, startCodexCliLogin, getCodexCliLoginStatus } from "~/services/codex/oauth"
 import { startCopilotDeviceFlow, pollCopilotSession, importCopilotAuthFiles } from "~/services/copilot/oauth"
 
 export const authRouter = new Hono()
@@ -76,30 +76,42 @@ authRouter.post("/login", async (c) => {
         }
 
         if (provider === "codex") {
-            if (!forceInteractive) {
-                const account = await importCodexAuthFile()
-                if (account) {
-                    return c.json({
-                        success: true,
-                        provider: "codex",
-                        email: account.email,
-                        id: account.id,
-                        status: "success",
-                        source: "import",
-                    })
+            if (forceInteractive) {
+                const session = await startCodexCliLogin()
+                if (session.status === "error") {
+                    return c.json({ success: false, error: session.message }, 400)
                 }
+                return c.json({
+                    success: true,
+                    provider: "codex",
+                    status: "pending",
+                    session_id: session.sessionId,
+                    verification_uri: session.verificationUri,
+                    user_code: session.userCode,
+                    message: session.message,
+                })
             }
 
-            const session = startCodexOAuthSession()
+            const result = await importCodexAuthSources()
+            if (result.accounts.length > 0) {
+                return c.json({
+                    success: true,
+                    provider: "codex",
+                    status: "success",
+                    source: "import",
+                    count: result.accounts.length,
+                    sources: result.sources,
+                    accounts: result.accounts.map(account => ({
+                        id: account.id,
+                        email: account.email,
+                        source: account.authSource,
+                    })),
+                })
+            }
             return c.json({
-                success: true,
-                provider: "codex",
-                status: "pending",
-                auth_url: session.authUrl,
-                auth_url_fallback: session.fallbackUrl,
-                state: session.state,
-                expires_at: session.expiresAt,
-            })
+                success: false,
+                error: "Codex auth files not found. Run Codex CLI login to create ~/.codex/auth.json, then retry.",
+            }, 400)
         }
 
         // 默认 Antigravity
@@ -169,20 +181,32 @@ authRouter.get("/copilot/status", async (c) => {
 })
 
 authRouter.get("/codex/status", async (c) => {
-    const state = c.req.query("state")
-    if (!state) {
-        return c.json({ success: false, error: "state required" }, 400)
+    const sessionId = c.req.query("session_id")
+    if (!sessionId) {
+        return c.json({ success: false, error: "session_id required" }, 400)
     }
-    const result = await pollCodexOAuthSession(state)
+    const result = await getCodexCliLoginStatus(sessionId)
     return c.json({
         success: result.status !== "error",
         status: result.status,
         message: result.message,
-        account: result.account ? {
-            id: result.account.id,
-            email: result.account.email,
-        } : undefined,
+        verification_uri: result.verificationUri,
+        user_code: result.userCode,
+        accounts: result.accounts?.map(account => ({
+            id: account.id,
+            email: account.email,
+            source: account.authSource,
+        })),
     })
+})
+
+authRouter.get("/codex/debug", async (c) => {
+    try {
+        const result = await debugCodexOAuth()
+        return c.json({ success: true, ...result })
+    } catch (error) {
+        return c.json({ success: false, error: (error as Error).message }, 500)
+    }
 })
 
 // 登出

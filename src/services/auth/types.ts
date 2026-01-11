@@ -1,4 +1,5 @@
 export type AuthProvider = "antigravity" | "codex" | "copilot"
+export type AuthSource = "codex-cli" | "cli-proxy"
 
 export interface ProviderAccount {
     id: string
@@ -10,6 +11,7 @@ export interface ProviderAccount {
     refreshToken?: string
     expiresAt?: number
     projectId?: string
+    authSource?: AuthSource
     createdAt?: string
     updatedAt?: string
 }

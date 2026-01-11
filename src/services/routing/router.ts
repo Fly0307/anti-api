@@ -4,7 +4,7 @@ import { createChatCompletionWithOptions, createChatCompletionStreamWithOptions 
 import { createCodexCompletion } from "~/services/codex/chat"
 import { createCopilotCompletion } from "~/services/copilot/chat"
 import { authStore } from "~/services/auth/store"
-import { loadRoutingConfig, type RoutingEntry } from "./config"
+import { loadRoutingConfig, type RoutingEntry, type RoutingFlow } from "./config"
 import { buildMessageStart, buildContentBlockStart, buildTextDelta, buildInputJsonDelta, buildContentBlockStop, buildMessageDelta, buildMessageStop } from "~/lib/translator"
 
 interface RoutedRequest {
@@ -25,9 +25,48 @@ function normalizeEntries(entries: RoutingEntry[]): RoutingEntry[] {
     return entries.filter(isEntryUsable)
 }
 
+const FALLBACK_STATUSES = new Set([408, 429, 500, 503, 529])
+
+function isAccountUnavailableError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false
+    return error.message.startsWith("Account not found:")
+}
+
+function isTransientTransportError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false
+    return /certificate|fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|timed out/i.test(error.message)
+}
+
+function shouldFallbackOnUpstream(error: UpstreamError): boolean {
+    return FALLBACK_STATUSES.has(error.status)
+}
+
+function getFlowKey(model: string): string {
+    const raw = model?.trim() || ""
+    if (raw.toLowerCase().startsWith("route:")) {
+        return raw.slice("route:".length).trim()
+    }
+    return raw
+}
+
+function selectFlowEntries(flows: RoutingFlow[], model: string): RoutingEntry[] {
+    if (flows.length === 0) {
+        return []
+    }
+
+    const flowKey = getFlowKey(model)
+    const exact = flows.find(flow => flow.name === flowKey)
+    if (exact) {
+        return exact.entries
+    }
+
+    const fallback = flows.find(flow => flow.name === "default") || flows[0]
+    return fallback?.entries || []
+}
+
 export async function createRoutedCompletion(request: RoutedRequest) {
     const config = loadRoutingConfig()
-    const entries = normalizeEntries(config.entries)
+    const entries = normalizeEntries(selectFlowEntries(config.flows, request.model))
 
     if (entries.length === 0) {
         return createChatCompletionWithOptions(request, { allowRotation: true })
@@ -63,9 +102,18 @@ export async function createRoutedCompletion(request: RoutedRequest) {
             }
         } catch (error) {
             lastError = error as Error
-            if (error instanceof UpstreamError && error.status === 429) {
+            if (entry.provider === "antigravity" && isAccountUnavailableError(error)) {
+                continue
+            }
+            if (error instanceof UpstreamError && shouldFallbackOnUpstream(error)) {
                 if (entry.provider !== "antigravity") {
                     authStore.markRateLimited(entry.provider, entry.accountId, error.status, error.body, error.retryAfter)
+                }
+                continue
+            }
+            if (isTransientTransportError(error)) {
+                if (entry.provider !== "antigravity") {
+                    authStore.markRateLimited(entry.provider, entry.accountId, 500, (error as Error).message)
                 }
                 continue
             }
@@ -82,7 +130,7 @@ export async function createRoutedCompletion(request: RoutedRequest) {
 
 export async function* createRoutedCompletionStream(request: RoutedRequest): AsyncGenerator<string, void, unknown> {
     const config = loadRoutingConfig()
-    const entries = normalizeEntries(config.entries)
+    const entries = normalizeEntries(selectFlowEntries(config.flows, request.model))
 
     if (entries.length === 0) {
         yield* createChatCompletionStreamWithOptions(request, { allowRotation: true })
@@ -144,9 +192,18 @@ export async function* createRoutedCompletionStream(request: RoutedRequest): Asy
             return
         } catch (error) {
             lastError = error as Error
-            if (error instanceof UpstreamError && error.status === 429) {
+            if (entry.provider === "antigravity" && isAccountUnavailableError(error)) {
+                continue
+            }
+            if (error instanceof UpstreamError && shouldFallbackOnUpstream(error)) {
                 if (entry.provider !== "antigravity") {
                     authStore.markRateLimited(entry.provider, entry.accountId, error.status, error.body, error.retryAfter)
+                }
+                continue
+            }
+            if (isTransientTransportError(error)) {
+                if (entry.provider !== "antigravity") {
+                    authStore.markRateLimited(entry.provider, entry.accountId, 500, (error as Error).message)
                 }
                 continue
             }

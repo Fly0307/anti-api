@@ -1,10 +1,11 @@
 import { Hono } from "hono"
 import { authStore } from "~/services/auth/store"
 import { getProviderModels } from "~/services/routing/models"
-import { loadRoutingConfig, saveRoutingConfig, type RoutingEntry } from "~/services/routing/config"
+import { loadRoutingConfig, saveRoutingConfig, type RoutingEntry, type RoutingFlow } from "~/services/routing/config"
 import { accountManager } from "~/services/antigravity/account-manager"
 import { readFileSync } from "fs"
 import { join } from "path"
+import { randomUUID } from "crypto"
 
 export const routingRouter = new Hono()
 
@@ -37,12 +38,25 @@ routingRouter.get("/config", (c) => {
 })
 
 routingRouter.post("/config", async (c) => {
-    const body = await c.req.json<{ entries?: RoutingEntry[] }>()
-    const entries = Array.isArray(body.entries) ? body.entries : []
-    const normalized = entries.map(entry => ({
-        ...entry,
-        id: entry.id || crypto.randomUUID(),
-        label: entry.label || `${entry.provider}:${entry.modelId}`,
+    const body = await c.req.json<{ flows?: RoutingFlow[]; entries?: RoutingEntry[] }>()
+    let flows: RoutingFlow[] = []
+
+    if (Array.isArray(body.flows)) {
+        flows = body.flows
+    } else if (Array.isArray(body.entries)) {
+        flows = [{ id: randomUUID(), name: "default", entries: body.entries }]
+    }
+
+    const normalized = flows.map((flow, index) => ({
+        id: flow.id || randomUUID(),
+        name: (flow.name || `Flow ${index + 1}`).trim() || `Flow ${index + 1}`,
+        entries: Array.isArray(flow.entries)
+            ? flow.entries.map(entry => ({
+                ...entry,
+                id: entry.id || randomUUID(),
+                label: entry.label || `${entry.provider}:${entry.modelId}`,
+            }))
+            : [],
     }))
 
     const config = saveRoutingConfig(normalized)

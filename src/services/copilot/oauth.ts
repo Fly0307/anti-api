@@ -1,5 +1,6 @@
 import consola from "consola"
 import { readdirSync, readFileSync } from "fs"
+import https from "https"
 import { authStore } from "~/services/auth/store"
 import type { ProviderAccount } from "~/services/auth/types"
 
@@ -10,6 +11,108 @@ const COPILOT_AUTH_DIR = "~/.cli-proxy-api"
 const DEVICE_CODE_URL = "https://github.com/login/device/code"
 const TOKEN_URL = "https://github.com/login/oauth/access_token"
 const USER_URL = "https://api.github.com/user"
+
+type JsonResponse = {
+    status: number
+    data: any
+    text: string
+}
+
+function isCertificateError(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false
+    const code = (error as { code?: string }).code
+    if (code === "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR") return true
+    const message = String((error as { message?: string }).message || "")
+    return message.toLowerCase().includes("certificate")
+}
+
+async function fetchJsonWithFallback(
+    url: string,
+    options: { method?: string; headers?: Record<string, string>; body?: string }
+): Promise<JsonResponse> {
+    try {
+        const response = await fetch(url, {
+            method: options.method,
+            headers: options.headers,
+            body: options.body,
+        })
+        const text = await response.text()
+        let data: any = null
+        if (text) {
+            try {
+                data = JSON.parse(text)
+            } catch {
+                data = null
+            }
+        }
+        return { status: response.status, data, text }
+    } catch (error) {
+        if (!isCertificateError(error)) {
+            throw error
+        }
+        return fetchInsecureJson(url, options)
+    }
+}
+
+async function fetchInsecureJson(
+    url: string,
+    options: { method?: string; headers?: Record<string, string>; body?: string }
+): Promise<JsonResponse> {
+    const target = new URL(url)
+    const method = options.method || "GET"
+    const headers = {
+        "User-Agent": "anti-api",
+        ...(options.headers || {}),
+    }
+    const insecureAgent = new https.Agent({ rejectUnauthorized: false })
+
+    return new Promise((resolve, reject) => {
+        const req = https.request(
+            {
+                protocol: target.protocol,
+                hostname: target.hostname,
+                port: target.port || 443,
+                path: `${target.pathname}${target.search}`,
+                method,
+                headers,
+                agent: insecureAgent,
+                rejectUnauthorized: false,
+                timeout: 10000,
+            },
+            (res) => {
+                let body = ""
+                res.on("data", (chunk) => {
+                    body += chunk
+                })
+                res.on("end", () => {
+                    let data: any = null
+                    if (body) {
+                        try {
+                            data = JSON.parse(body)
+                        } catch {
+                            data = null
+                        }
+                    }
+                    resolve({
+                        status: res.statusCode || 0,
+                        data,
+                        text: body,
+                    })
+                })
+            }
+        )
+
+        req.on("error", reject)
+        req.on("timeout", () => {
+            req.destroy(new Error("Request timed out"))
+        })
+
+        if (options.body) {
+            req.write(options.body)
+        }
+        req.end()
+    })
+}
 
 export interface CopilotDeviceCode {
     deviceCode: string
@@ -38,7 +141,7 @@ export async function startCopilotDeviceFlow(): Promise<CopilotAuthSession> {
         scope: "read:user",
     })
 
-    const response = await fetch(DEVICE_CODE_URL, {
+    const response = await fetchJsonWithFallback(DEVICE_CODE_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -47,9 +150,9 @@ export async function startCopilotDeviceFlow(): Promise<CopilotAuthSession> {
         body: params.toString(),
     })
 
-    const data = await response.json() as any
-    if (!response.ok) {
-        throw new Error(data?.error_description || data?.error || "Failed to start Copilot device flow")
+    const data = response.data as any
+    if (response.status < 200 || response.status >= 300) {
+        throw new Error(data?.error_description || data?.error || response.text || "Failed to start Copilot device flow")
     }
 
     const session: CopilotAuthSession = {
@@ -117,7 +220,7 @@ export async function pollCopilotSession(deviceCode: string): Promise<CopilotAut
         grant_type: "urn:ietf:params:oauth:grant-type:device_code",
     })
 
-    const response = await fetch(TOKEN_URL, {
+    const response = await fetchJsonWithFallback(TOKEN_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -126,7 +229,7 @@ export async function pollCopilotSession(deviceCode: string): Promise<CopilotAut
         body: params.toString(),
     })
 
-    const data = await response.json() as any
+    const data = response.data as any
 
     if (data?.error === "authorization_pending") {
         return session
@@ -136,9 +239,9 @@ export async function pollCopilotSession(deviceCode: string): Promise<CopilotAut
         sessions.set(deviceCode, session)
         return session
     }
-    if (!response.ok || data?.error) {
+    if (response.status < 200 || response.status >= 300 || data?.error) {
         session.status = "error"
-        session.message = data?.error_description || data?.error || "Copilot authorization failed"
+        session.message = data?.error_description || data?.error || response.text || "Copilot authorization failed"
         sessions.set(deviceCode, session)
         return session
     }
@@ -163,16 +266,16 @@ export async function pollCopilotSession(deviceCode: string): Promise<CopilotAut
 
 async function fetchCopilotAccount(accessToken: string): Promise<ProviderAccount | null> {
     try {
-        const response = await fetch(USER_URL, {
+        const response = await fetchJsonWithFallback(USER_URL, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 "Accept": "application/vnd.github+json",
             },
         })
 
-        const data = await response.json() as any
-        if (!response.ok) {
-            consola.warn("Copilot user profile fetch failed:", data)
+        const data = response.data as any
+        if (response.status < 200 || response.status >= 300) {
+            consola.warn("Copilot user profile fetch failed:", data || response.text)
             return null
         }
 

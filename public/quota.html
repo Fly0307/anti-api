@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Anti-API Dashboard</title>
+    <title>Dashboard</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>" type="image/svg+xml">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -273,7 +273,7 @@
         <!-- Header -->
         <div class="mb-8 flex items-center justify-between">
             <div>
-                <h1 class="text-3xl font-bold text-gray-300">Anti-API Quotas Dashboard</h1>
+                <h1 class="text-3xl font-bold text-gray-300">Dashboard</h1>
                 <p id="plan-info" class="text-gray-500 text-sm font-bold mt-1">Loading...</p>
                 <div id="copy-toast"
                     class="fixed bottom-32 right-8 bg-gray-800 text-gray-300 px-4 py-2 rounded-lg text-sm opacity-0 translate-x-8 transition-all duration-300 pointer-events-none z-50">
@@ -340,26 +340,33 @@
                 <h2 class="text-lg font-bold">Add Account</h2>
                 <button onclick="closeAddAccountModal()" class="text-gray-500 hover:text-gray-300">✕</button>
             </div>
-            <p class="text-sm text-gray-500 mb-4">Choose a provider to authenticate.</p>
             <div class="space-y-2">
                 <button class="w-full text-left px-4 py-3 rounded-lg border border-[#2f253f] hover:border-gray-500"
                     onclick="startProviderLogin('antigravity')">
-                    Antigravity (OAuth)
+                    Antigravity
                 </button>
                 <button class="w-full text-left px-4 py-3 rounded-lg border border-[#2f253f] hover:border-gray-500"
                     onclick="startProviderLogin('codex')">
-                    Codex (OAuth / Import)
+                    Codex
                 </button>
                 <button class="w-full text-left px-4 py-3 rounded-lg border border-[#2f253f] hover:border-gray-500"
                     onclick="startProviderLogin('copilot')">
-                    GitHub Copilot (Device Code)
+                    GitHub Copilot
                 </button>
             </div>
             <div id="add-account-status" class="mt-4 text-xs text-gray-400 hidden"></div>
-            <div id="codex-fallback" class="mt-3 text-xs text-gray-400 hidden">
-                If the Codex page is blank, open this link:
-                <a id="codex-fallback-link" href="#" target="_blank"
-                    class="text-blue-400 hover:text-blue-300 ml-1">Alt authorize</a>
+            <div id="codex-device" class="mt-4 hidden">
+                <div class="text-sm text-gray-400 mb-2">Open the browser and enter this code:</div>
+                <div class="flex items-center gap-2">
+                    <div id="codex-code"
+                        class="px-3 py-2 rounded-lg bg-black border border-[#2f253f] font-mono text-sm text-gray-200">
+                        ------
+                    </div>
+                    <button onclick="copyCodexCode()"
+                        class="px-3 py-2 rounded-lg border border-[#2f253f] text-xs hover:border-gray-500">
+                        Copy
+                    </button>
+                </div>
             </div>
             <div id="copilot-device" class="mt-4 hidden">
                 <div class="text-sm text-gray-400 mb-2">Open the browser and enter this code:</div>
@@ -382,6 +389,8 @@
     <script>
         const API_BASE = 'http://localhost:8964';
         let loadingDismissed = false;
+        let codexPopup = null;
+        let codexPopupUrl = null;
 
         // 3D 倾斜效果
         function init3DEffect() {
@@ -663,8 +672,8 @@
             document.getElementById('add-account-modal').classList.remove('hidden');
             document.getElementById('add-account-modal').classList.add('flex');
             document.getElementById('add-account-status').classList.add('hidden');
+            document.getElementById('codex-device').classList.add('hidden');
             document.getElementById('copilot-device').classList.add('hidden');
-            document.getElementById('codex-fallback').classList.add('hidden');
         }
 
         function closeAddAccountModal() {
@@ -683,7 +692,11 @@
 
             try {
                 const payload = { provider };
-                if (provider === 'codex' || provider === 'copilot') {
+                if (provider === 'codex') {
+                    codexPopup = window.open('about:blank', '_blank');
+                    codexPopupUrl = null;
+                }
+                if (provider === 'copilot' || provider === 'codex') {
                     payload.force = true;
                 }
                 const response = await fetch(`${API_BASE}/auth/login`, {
@@ -702,6 +715,7 @@
                     if (data.status === 'success' && data.source === 'import') {
                         setAddAccountStatus(`Imported Copilot: ${data.login || 'Copilot'}`);
                         await checkAuthStatus();
+                        fetchQuota(true);
                         return;
                     }
                     showCopilotDeviceFlow(data);
@@ -709,22 +723,17 @@
                 }
 
                 if (provider === 'codex' && data.status === 'pending') {
-                    if (data.auth_url) {
-                        window.open(data.auth_url, '_blank');
-                    }
-                    const fallbackWrap = document.getElementById('codex-fallback');
-                    const fallbackLink = document.getElementById('codex-fallback-link');
-                    if (data.auth_url_fallback && fallbackWrap && fallbackLink) {
-                        fallbackLink.href = data.auth_url_fallback;
-                        fallbackWrap.classList.remove('hidden');
-                    }
-                    setAddAccountStatus('Waiting for Codex authorization...');
-                    pollCodexStatus(data.state);
+                    showCodexDeviceFlow(data);
                     return;
                 }
 
                 if (provider === 'codex' && data.source === 'import') {
-                    setAddAccountStatus(`Imported Codex: ${data.email || data.id || 'Codex'}`);
+                    if (data.count && data.count > 1) {
+                        setAddAccountStatus(`Imported ${data.count} Codex accounts`);
+                    } else {
+                        const first = (data.accounts && data.accounts[0]) || {};
+                        setAddAccountStatus(`Imported Codex: ${first.email || first.id || 'Codex'}`);
+                    }
                 } else {
                     setAddAccountStatus(`Connected: ${data.email || data.id || provider}`);
                 }
@@ -749,6 +758,18 @@
             pollCopilotStatus(data.device_code, data.interval || 5);
         }
 
+        function showCodexDeviceFlow(data) {
+            const device = document.getElementById('codex-device');
+            const codeEl = document.getElementById('codex-code');
+            device.classList.remove('hidden');
+            codeEl.textContent = data.user_code || '----';
+            if (data.verification_uri) {
+                openCodexVerification(data.verification_uri);
+            }
+            setAddAccountStatus('Waiting for Codex CLI authorization...');
+            pollCodexStatus(data.session_id);
+        }
+
         async function pollCopilotStatus(deviceCode, intervalSeconds) {
             if (!deviceCode) return;
             const status = await fetch(`${API_BASE}/auth/copilot/status?device_code=${deviceCode}`);
@@ -756,6 +777,7 @@
             if (data.status === 'success') {
                 setAddAccountStatus(`Connected: ${data.account?.login || 'Copilot'}`);
                 await checkAuthStatus();
+                fetchQuota(true);
                 return;
             }
             if (data.status === 'error') {
@@ -771,20 +793,47 @@
             showToast(`Copied: ${code}`);
         }
 
-        async function pollCodexStatus(state) {
-            if (!state) return;
-            const status = await fetch(`${API_BASE}/auth/codex/status?state=${state}`);
+        async function pollCodexStatus(sessionId) {
+            if (!sessionId) return;
+            const status = await fetch(`${API_BASE}/auth/codex/status?session_id=${sessionId}`);
             const data = await status.json();
             if (data.status === 'success') {
-                setAddAccountStatus(`Connected: ${data.account?.email || 'Codex'}`);
+                if (data.accounts && data.accounts.length > 1) {
+                    setAddAccountStatus(`Imported ${data.accounts.length} Codex accounts`);
+                } else {
+                    const first = (data.accounts && data.accounts[0]) || {};
+                    setAddAccountStatus(`Connected: ${first.email || first.id || 'Codex'}`);
+                }
                 await checkAuthStatus();
+                fetchQuota(true);
                 return;
             }
             if (data.status === 'error') {
                 setAddAccountStatus(data.message || 'Codex authentication failed');
                 return;
             }
-            setTimeout(() => pollCodexStatus(state), 2000);
+            if (data.user_code && data.verification_uri) {
+                document.getElementById('codex-code').textContent = data.user_code;
+                openCodexVerification(data.verification_uri);
+            }
+            setTimeout(() => pollCodexStatus(sessionId), 2000);
+        }
+
+        function copyCodexCode() {
+            const code = document.getElementById('codex-code').textContent;
+            navigator.clipboard.writeText(code || '');
+            showToast(`Copied: ${code}`);
+        }
+
+        function openCodexVerification(url) {
+            if (!url || url === codexPopupUrl) return;
+            codexPopupUrl = url;
+            if (codexPopup && !codexPopup.closed) {
+                codexPopup.location.href = url;
+                codexPopup.focus();
+            } else {
+                codexPopup = window.open(url, '_blank');
+            }
         }
 
         // 登出处理

@@ -97,10 +97,37 @@ class AccountManager {
     private accounts: Map<string, Account> = new Map()
     private currentIndex = 0
     private dataFile: string
+    private loaded = false
 
     constructor() {
         const homeDir = process.env.HOME || process.env.USERPROFILE || "."
         this.dataFile = path.join(homeDir, ".anti-api", "accounts.json")
+    }
+
+    private ensureLoaded(): void {
+        if (!this.loaded) {
+            this.load()
+        }
+    }
+
+    private hydrateFromAuthStore(accountId?: string): void {
+        const fromStore = accountId
+            ? [authStore.getAccount("antigravity", accountId)].filter(Boolean)
+            : authStore.listAccounts("antigravity")
+
+        for (const stored of fromStore) {
+            if (!stored || this.accounts.has(stored.id)) continue
+            this.accounts.set(stored.id, {
+                id: stored.id,
+                email: stored.email || stored.login || stored.id,
+                accessToken: stored.accessToken,
+                refreshToken: stored.refreshToken || "",
+                expiresAt: stored.expiresAt || 0,
+                projectId: stored.projectId || null,
+                rateLimitedUntil: null,
+                consecutiveFailures: 0,
+            })
+        }
     }
 
     /**
@@ -134,6 +161,10 @@ class AccountManager {
             consola.warn("Failed to load accounts:", e)
         }
 
+        if (this.accounts.size === 0) {
+            this.hydrateFromAuthStore()
+        }
+
         // 如果没有已保存的账号，从 state 迁移当前账号
         if (this.accounts.size === 0 && state.accessToken && state.refreshToken) {
             const id = state.userEmail || "default"
@@ -148,6 +179,8 @@ class AccountManager {
                 consecutiveFailures: 0,
             })
         }
+
+        this.loaded = true
     }
 
     /**
@@ -270,6 +303,10 @@ class AccountManager {
         email: string
         accountId: string
     } | null> {
+        this.ensureLoaded()
+        if (this.accounts.size === 0) {
+            this.hydrateFromAuthStore()
+        }
         const now = Date.now()
         const accountList = Array.from(this.accounts.values())
 
@@ -371,6 +408,10 @@ class AccountManager {
         email: string
         accountId: string
     } | null> {
+        this.ensureLoaded()
+        if (!this.accounts.has(accountId)) {
+            this.hydrateFromAuthStore(accountId)
+        }
         const account = this.accounts.get(accountId)
         if (!account) return null
 
