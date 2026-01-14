@@ -17,12 +17,10 @@
 
 ## What's New
 
-- Dual format support (OpenAI + Anthropic) with streaming
-- Added .bat one-click launcher for Windows users
-- Three exclusive remote services (ngrok/cloudflared/localtunnel) with visual panel
-- All models passed tool_use tests, fully compatible with Claude Code
-- OAuth expiration auto-detection and refresh
-- Two free methods to get Gemini Pro access
+- Resolve concurrency-driven 429/500 errors via quota locking
+- Adapted for Claude Code web search / mcp / skills / tool-use
+- Added Codex / GitHub Copilot reverse proxy with multi-account auto-rotation
+- Background tasks downgrade models to reduce unnecessary quota usage
 
 ## Features
 
@@ -133,12 +131,10 @@ MIT
 
 ## 更新内容
 
-- 同时兼容 OpenAI 和 Anthropic 格式，且均支持流式响应
-- 增加 .bat 格式一键启动器，适配 Windows 用户
-- 三种独家远程服务 (ngrok/cloudflared/localtunnel) 与可视化面板
-- 所有模型tool_use测试均通过，完美兼容 Claude Code
-- OAuth 过期自动检测和刷新。
-- 提供两种免费获取 Gemini Pro 的方法
+- 通过限额锁 解决并发导致的429 / 500问题
+- 适配Claude Code内web search / mcp / skills / tool-use
+- 新增加Codex / Github Copilot 反代服务，支持多账号自动轮换
+- 后台任务降级模型，降低不必要的额度消耗
 
 ## 特性
 
