@@ -14,6 +14,7 @@ export function isCopilotInsecureTlsEnabled(): boolean {
 }
 
 const COPILOT_COMPLETIONS_URL = "https://api.githubcopilot.com/chat/completions"
+const COPILOT_RESPONSES_URL = "https://api.githubcopilot.com/responses"
 const COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
 const COPILOT_MODELS_URL = "https://api.githubcopilot.com/models"
 
@@ -96,23 +97,197 @@ interface OpenAIResponse {
     usage?: { prompt_tokens?: number; completion_tokens?: number }
 }
 
-export async function createCopilotCompletion(
-    account: ProviderAccount,
+type OpenAIMessage = ReturnType<typeof toOpenAIMessages>[number]
+
+function shouldUseResponsesForModel(model: string): boolean {
+    const normalized = model.trim().toLowerCase()
+    return normalized.includes("codex")
+}
+
+function isUnsupportedChatEndpointError(status: number, body: string): boolean {
+    if (status !== 400) return false
+    const text = body.toLowerCase()
+    return text.includes("unsupported_api_for_model")
+        || (text.includes("/chat/completions") && text.includes("not accessible"))
+}
+
+function parseResponsesSSE(sseText: string): any {
+    const lines = sseText.split("\n")
+    const textChunks: string[] = []
+    let lastResponse: any = null
+
+    for (const line of lines) {
+        if (!line.startsWith("data:")) continue
+        const data = line.slice(5).trim()
+        if (data === "[DONE]") continue
+        try {
+            const parsed = JSON.parse(data)
+            if (parsed.type === "response.completed") {
+                return parsed.response || parsed
+            }
+            if (parsed.type === "response.created" && parsed.response) {
+                lastResponse = parsed.response
+            }
+            if (typeof parsed?.delta === "string" && String(parsed.type || "").includes("output_text")) {
+                textChunks.push(parsed.delta)
+            } else if (typeof parsed?.text === "string" && String(parsed.type || "").includes("output_text")) {
+                textChunks.push(parsed.text)
+            } else if (typeof parsed?.output_text === "string") {
+                textChunks.push(parsed.output_text)
+            }
+        } catch {
+            // Ignore invalid JSON event payloads
+        }
+    }
+
+    if (textChunks.length > 0) {
+        const output = [{
+            type: "message",
+            content: [{ type: "output_text", text: textChunks.join("") }],
+        }]
+        return lastResponse ? { ...lastResponse, output } : { output }
+    }
+
+    for (const line of lines) {
+        if (!line.startsWith("data:")) continue
+        const data = line.slice(5).trim()
+        if (data === "[DONE]") continue
+        try {
+            const parsed = JSON.parse(data)
+            if (parsed.output || parsed.choices) {
+                return parsed
+            }
+        } catch {
+            // Ignore invalid JSON event payloads
+        }
+    }
+
+    if (lastResponse) {
+        return { ...lastResponse, output: [] }
+    }
+
+    throw new Error("No valid response found in SSE stream")
+}
+
+function buildCompletionFromResponses(payload: any): OpenAIResponse {
+    const output = Array.isArray(payload?.output) ? payload.output : []
+    const textParts: string[] = []
+    const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = []
+
+    for (const item of output) {
+        if (item?.type === "message" && Array.isArray(item.content)) {
+            for (const content of item.content) {
+                if ((content?.type === "output_text" || content?.type === "text") && typeof content.text === "string") {
+                    textParts.push(content.text)
+                }
+                if (content?.type === "tool_call") {
+                    toolCalls.push({
+                        id: content.id || `tool_${crypto.randomUUID().slice(0, 8)}`,
+                        type: "function",
+                        function: {
+                            name: content.name || "tool",
+                            arguments: typeof content.arguments === "string"
+                                ? content.arguments
+                                : JSON.stringify(content.arguments || {}),
+                        },
+                    })
+                }
+            }
+        } else if (item?.type === "tool_call") {
+            toolCalls.push({
+                id: item.id || `tool_${crypto.randomUUID().slice(0, 8)}`,
+                type: "function",
+                function: {
+                    name: item.name || "tool",
+                    arguments: typeof item.arguments === "string"
+                        ? item.arguments
+                        : JSON.stringify(item.arguments || {}),
+                },
+            })
+        } else if (item?.type === "function_call") {
+            toolCalls.push({
+                id: item.call_id || item.id || `tool_${crypto.randomUUID().slice(0, 8)}`,
+                type: "function",
+                function: {
+                    name: item.name || "tool",
+                    arguments: typeof item.arguments === "string"
+                        ? item.arguments
+                        : JSON.stringify(item.arguments || {}),
+                },
+            })
+        } else if (item?.type === "output_text" && typeof item.text === "string") {
+            textParts.push(item.text)
+        }
+    }
+
+    if (textParts.length === 0 && typeof payload?.output_text === "string") {
+        textParts.push(payload.output_text)
+    }
+
+    return {
+        choices: [
+            {
+                message: {
+                    content: textParts.join(""),
+                    tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+                },
+                finish_reason: payload?.stop_reason || null,
+            },
+        ],
+        usage: {
+            prompt_tokens: payload?.usage?.input_tokens || 0,
+            completion_tokens: payload?.usage?.output_tokens || 0,
+        },
+    }
+}
+
+function toCopilotResponsesInput(messages: OpenAIMessage[]): any[] {
+    const input: any[] = []
+
+    for (const msg of messages) {
+        if (msg.role === "user") {
+            input.push({
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: msg.content || "" }],
+            })
+        } else if (msg.role === "assistant") {
+            input.push({
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: msg.content || "" }],
+            })
+            if (msg.tool_calls && msg.tool_calls.length > 0) {
+                for (const toolCall of msg.tool_calls) {
+                    input.push({
+                        type: "function_call",
+                        call_id: toolCall.id,
+                        name: toolCall.function.name,
+                        arguments: toolCall.function.arguments,
+                    })
+                }
+            }
+        } else if (msg.role === "tool") {
+            input.push({
+                type: "function_call_output",
+                call_id: msg.tool_call_id,
+                output: msg.content || "",
+            })
+        }
+    }
+
+    return input
+}
+
+async function requestCopilotChatCompletion(
+    apiToken: string,
     model: string,
     messages: ClaudeMessage[],
     tools?: ClaudeTool[],
     maxTokens?: number
-) {
-    const apiToken = await getCopilotApiToken(account)
-
-    // Fetch and log available models (first call will log, subsequent uses cache)
-    await fetchCopilotModels(apiToken)
-
-    // Map model name to Copilot-compatible format
-    const mappedModel = mapCopilotModelName(model)
-
+): Promise<OpenAIResponse> {
     const requestBody = {
-        model: mappedModel,
+        model,
         messages: toOpenAIMessages(messages),
         tools: toOpenAITools(tools),
         max_tokens: maxTokens,
@@ -131,11 +306,97 @@ export async function createCopilotCompletion(
     })
 
     if (response.status < 200 || response.status >= 300) {
-        consola.error(`Copilot error ${response.status} for model ${mappedModel}:`, response.text.slice(0, 500))
         throw new UpstreamError("copilot", response.status, response.text, undefined)
     }
 
-    const data = response.data as OpenAIResponse
+    return response.data as OpenAIResponse
+}
+
+async function requestCopilotResponsesCompletion(
+    apiToken: string,
+    model: string,
+    messages: ClaudeMessage[],
+    tools?: ClaudeTool[],
+    maxTokens?: number
+): Promise<OpenAIResponse> {
+    const openAIMessages = toOpenAIMessages(messages)
+    const systemMessage = messages.find(message => message.role === "system")
+    const instructions = typeof systemMessage?.content === "string" && systemMessage.content.trim().length > 0
+        ? systemMessage.content
+        : "You are a helpful assistant."
+    const openAITools = toOpenAITools(tools)
+    const responsesTools = openAITools?.map(tool => ({
+        type: "function" as const,
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters,
+    }))
+
+    const requestBody = {
+        model,
+        input: toCopilotResponsesInput(openAIMessages),
+        tools: responsesTools,
+        instructions,
+        max_output_tokens: maxTokens,
+        stream: true,
+        store: false,
+        parallel_tool_calls: true,
+    }
+
+    const response = await fetchInsecureJson(COPILOT_RESPONSES_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiToken}`,
+            "User-Agent": "anti-api/1.0",
+            "Editor-Version": "vscode/1.95.0",
+            "Editor-Plugin-Version": "copilot/1.300.0",
+            "Openai-Beta": "responses=experimental",
+        },
+        body: JSON.stringify(requestBody),
+    })
+
+    if (response.status < 200 || response.status >= 300) {
+        throw new UpstreamError("copilot", response.status, response.text, undefined)
+    }
+
+    const parsed = response.data && (response.data.output || response.data.choices)
+        ? response.data
+        : parseResponsesSSE(response.text)
+    return buildCompletionFromResponses(parsed)
+}
+
+export async function createCopilotCompletion(
+    account: ProviderAccount,
+    model: string,
+    messages: ClaudeMessage[],
+    tools?: ClaudeTool[],
+    maxTokens?: number
+) {
+    const apiToken = await getCopilotApiToken(account)
+
+    // Fetch and log available models (first call will log, subsequent uses cache)
+    await fetchCopilotModels(apiToken)
+
+    // Map model name to Copilot-compatible format
+    const mappedModel = mapCopilotModelName(model)
+    let data: OpenAIResponse
+    const preferResponses = shouldUseResponsesForModel(mappedModel)
+    if (preferResponses) {
+        data = await requestCopilotResponsesCompletion(apiToken, mappedModel, messages, tools, maxTokens)
+    } else {
+        try {
+            data = await requestCopilotChatCompletion(apiToken, mappedModel, messages, tools, maxTokens)
+        } catch (error) {
+            if (error instanceof UpstreamError && isUnsupportedChatEndpointError(error.status, error.body)) {
+                consola.warn(`Copilot model ${mappedModel} is not available on /chat/completions, retrying with /responses`)
+                data = await requestCopilotResponsesCompletion(apiToken, mappedModel, messages, tools, maxTokens)
+            } else {
+                throw error
+            }
+        }
+    }
+
     const choice = data?.choices?.[0]
     const content = choice?.message?.content || ""
     const toolCalls = choice?.message?.tool_calls || []

@@ -29,6 +29,24 @@ interface UsageData {
     lastUpdated: string
     models: Record<string, ModelUsage>
     daily: DailyUsage[]  // Last 7 days
+    recentCalls: RecentCall[]
+}
+
+interface RecentCall {
+    timestamp: string
+    model: string
+    requestedModel?: string
+    routeGroup: string
+    latencyMs: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+}
+
+interface UsageRecordMeta {
+    routeGroup?: string
+    latencyMs?: number
+    requestedModel?: string
 }
 
 // In-memory cache
@@ -36,6 +54,7 @@ let usageCache: UsageData = {
     lastUpdated: new Date().toISOString(),
     models: {},
     daily: [],
+    recentCalls: [],
 }
 
 let isDirty = false
@@ -55,6 +74,24 @@ export function loadUsage(): void {
                     input: typeof entry?.input === "number" ? entry.input : 0,
                     output: typeof entry?.output === "number" ? entry.output : 0,
                 })) : [],
+                recentCalls: Array.isArray(data.recentCalls) ? data.recentCalls
+                    .map((entry: any) => ({
+                        timestamp: typeof entry?.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
+                        model: typeof entry?.model === "string" ? entry.model : "unknown",
+                        requestedModel: typeof entry?.requestedModel === "string" && entry.requestedModel.trim()
+                            ? entry.requestedModel.trim()
+                            : undefined,
+                        routeGroup: typeof entry?.routeGroup === "string" && entry.routeGroup.trim()
+                            ? entry.routeGroup.trim()
+                            : "n/a",
+                        latencyMs: typeof entry?.latencyMs === "number" && Number.isFinite(entry.latencyMs)
+                            ? Math.max(0, Math.round(entry.latencyMs))
+                            : 0,
+                        inputTokens: typeof entry?.inputTokens === "number" ? Math.max(0, Math.round(entry.inputTokens)) : 0,
+                        outputTokens: typeof entry?.outputTokens === "number" ? Math.max(0, Math.round(entry.outputTokens)) : 0,
+                        totalTokens: typeof entry?.totalTokens === "number" ? Math.max(0, Math.round(entry.totalTokens)) : 0,
+                    }))
+                    .slice(-50) : [],
             }
         }
     } catch (e) {
@@ -108,6 +145,10 @@ function getTodayString(): string {
 
 // Record usage (fire-and-forget, non-blocking)
 export function recordUsage(model: string, inputTokens: number, outputTokens: number): void {
+    recordUsageWithMeta(model, inputTokens, outputTokens)
+}
+
+export function recordUsageWithMeta(model: string, inputTokens: number, outputTokens: number, meta?: UsageRecordMeta): void {
     if (!model || (inputTokens <= 0 && outputTokens <= 0)) return
 
     // Update model totals
@@ -142,6 +183,20 @@ export function recordUsage(model: string, inputTokens: number, outputTokens: nu
         }
     }
 
+    usageCache.recentCalls.push({
+        timestamp: new Date().toISOString(),
+        model,
+        requestedModel: meta?.requestedModel?.trim() || undefined,
+        routeGroup: meta?.routeGroup?.trim() || "n/a",
+        latencyMs: Math.max(0, Math.round(meta?.latencyMs || 0)),
+        inputTokens: Math.max(0, Math.round(inputTokens || 0)),
+        outputTokens: Math.max(0, Math.round(outputTokens || 0)),
+        totalTokens: Math.max(0, Math.round((inputTokens || 0) + (outputTokens || 0))),
+    })
+    if (usageCache.recentCalls.length > 50) {
+        usageCache.recentCalls = usageCache.recentCalls.slice(-50)
+    }
+
     scheduleSave()
 }
 
@@ -172,6 +227,16 @@ export function getUsage(): {
     }>
     totalCost: number
     daily: Array<{ date: string; cost: number; input: number; output: number }>
+    recentCalls: Array<{
+        timestamp: string
+        model: string
+        requestedModel?: string
+        routeGroup: string
+        latencyMs: number
+        inputTokens: number
+        outputTokens: number
+        totalTokens: number
+    }>
 } {
     const models = Object.entries(usageCache.models).map(([model, usage]) => {
         const costs = calculateCost(model, usage)
@@ -201,6 +266,19 @@ export function getUsage(): {
             input: Math.round(d.input || 0),
             output: Math.round(d.output || 0),
         })),
+        recentCalls: usageCache.recentCalls
+            .slice(-5)
+            .reverse()
+            .map(call => ({
+                timestamp: call.timestamp,
+                model: call.model,
+                requestedModel: call.requestedModel,
+                routeGroup: call.routeGroup,
+                latencyMs: Math.round(call.latencyMs || 0),
+                inputTokens: Math.round(call.inputTokens || 0),
+                outputTokens: Math.round(call.outputTokens || 0),
+                totalTokens: Math.round(call.totalTokens || 0),
+            })),
     }
 }
 
@@ -210,6 +288,7 @@ export function resetUsage(): void {
         lastUpdated: new Date().toISOString(),
         models: {},
         daily: [],
+        recentCalls: [],
     }
     isDirty = true
     saveUsage()

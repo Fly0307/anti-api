@@ -7,11 +7,12 @@ services:
     ports:
       - "8964:8964"
       - "51121:51121"
-      - "1455-1465:1455-1465"
+      - "2455-2465:2455-2465"
     environment:
       ANTI_API_DATA_DIR: /app/data
       ANTI_API_OAUTH_NO_OPEN: "1"
       ANTI_API_NO_OPEN: "1"
+      ANTI_API_CODEX_CALLBACK_PORT: "2455"
     volumes:
       - ${HOME}/.anti-api:/app/data
     restart: unless-stopped

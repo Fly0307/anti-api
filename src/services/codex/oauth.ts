@@ -34,7 +34,7 @@ const CODEX_OAUTH_CONFIG = {
     authorizeUrl: "https://auth.openai.com/oauth/authorize",
     tokenUrl: "https://auth.openai.com/oauth/token",
     scopes: ["openid", "email", "profile", "offline_access"],
-    callbackPort: 1455,
+    callbackPort: Number.parseInt(process.env.ANTI_API_CODEX_CALLBACK_PORT || "1455", 10) || 1455,
     callbackPath: "/auth/callback",
 }
 

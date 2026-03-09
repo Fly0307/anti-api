@@ -1098,15 +1098,16 @@ export async function createChatCompletionWithOptions(
     }
 
     try {
-    const antigravityRequest = claudeToAntigravity(
-        getAntigravityModelName(request.model),
-        request.messages,
-        request.tools,
-        request.toolChoice
-    )
+        const antigravityRequest = claudeToAntigravity(
+            getAntigravityModelName(request.model),
+            request.messages,
+            request.tools,
+            request.toolChoice
+        )
 
         if (projectId) antigravityRequest.project = projectId
 
+        const requestStart = Date.now()
         const rawSse = await sendRequestSse(
             STREAM_ENDPOINT,
             antigravityRequest,
@@ -1126,8 +1127,12 @@ export async function createChatCompletionWithOptions(
         const outputTokens = result.usage?.outputTokens || 0
         const actualModelId = getAntigravityModelName(request.model)
         if (inputTokens > 0 || outputTokens > 0) {
-            import("~/services/usage-tracker").then(({ recordUsage }) => {
-                recordUsage(actualModelId, inputTokens, outputTokens)
+            import("~/services/usage-tracker").then(({ recordUsageWithMeta }) => {
+                recordUsageWithMeta(actualModelId, inputTokens, outputTokens, {
+                    routeGroup: options.routeTag,
+                    latencyMs: Date.now() - requestStart,
+                    requestedModel: request.model,
+                })
             }).catch(() => { })
         }
 
@@ -1179,6 +1184,7 @@ export async function* createChatCompletionStreamWithOptions(
     }
 
     try {
+        const requestStart = Date.now()
         const antigravityRequest = claudeToAntigravity(
             getAntigravityModelName(request.model),
             request.messages,
@@ -1285,8 +1291,12 @@ export async function* createChatCompletionStreamWithOptions(
         // Record usage (fire-and-forget) - use actual native model ID
         const actualModelId = getAntigravityModelName(request.model)
         if (outputTokens > 0) {
-            import("~/services/usage-tracker").then(({ recordUsage }) => {
-                recordUsage(actualModelId, 0, outputTokens)
+            import("~/services/usage-tracker").then(({ recordUsageWithMeta }) => {
+                recordUsageWithMeta(actualModelId, 0, outputTokens, {
+                    routeGroup: options.routeTag,
+                    latencyMs: Date.now() - requestStart,
+                    requestedModel: request.model,
+                })
             }).catch(() => { })
         }
     } finally {

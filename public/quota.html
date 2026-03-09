@@ -459,6 +459,13 @@
                     </div>
                 </div>
             </div>
+
+            <div class="rounded-xl border border-gray-800 p-5 mt-6">
+                <div class="text-sm font-bold text-gray-300 mb-4">Recent 5 Calls</div>
+                <div id="usage-recent-calls" class="space-y-2">
+                    <div class="text-gray-500 text-sm text-center py-4">No recent calls</div>
+                </div>
+            </div>
         </div>
 
         <!-- ==================== REMOTE TAB ==================== -->
@@ -2205,12 +2212,14 @@
             // Show loading state
             const totalEl = document.getElementById('usage-total-large');
             const gridEl = document.getElementById('usage-model-list');
+            const recentEl = document.getElementById('usage-recent-calls');
             if (totalEl) totalEl.textContent = '...';
             const todayTokensEl = document.getElementById('usage-today-tokens');
             const totalTokensEl = document.getElementById('usage-total-tokens');
             if (todayTokensEl) todayTokensEl.classList.add('hidden');
             if (totalTokensEl) totalTokensEl.textContent = '... tokens';
             if (gridEl) gridEl.innerHTML = '<div class="text-gray-500 text-sm text-center py-4">Loading...</div>';
+            if (recentEl) recentEl.innerHTML = '<div class="text-gray-500 text-sm text-center py-4">Loading...</div>';
 
             try {
                 const res = await fetch(`${API_BASE}/usage`);
@@ -2232,14 +2241,21 @@
         function renderUsageData(data) {
             const grid = document.getElementById('usage-model-list');
             const models = data.models || [];
+            const recentCalls = data.recentCalls || [];
             const formatTokenCount = (value) => {
                 const num = Number(value) || 0;
                 if (num >= 1_000_000) return (num / 1_000_000).toFixed(2) + 'M';
                 if (num >= 1000) return Math.round(num / 1000) + 'K';
                 return String(Math.round(num));
             };
+            const formatLatency = (value) => {
+                const ms = Number(value) || 0;
+                if (ms >= 1000) return (ms / 1000).toFixed(2) + 's';
+                return Math.round(ms) + 'ms';
+            };
             const todayTokensEl = document.getElementById('usage-today-tokens');
             const totalTokensEl = document.getElementById('usage-total-tokens');
+            const recentEl = document.getElementById('usage-recent-calls');
 
             if (models.length === 0) {
                 grid.innerHTML = `<div class="text-gray-500 text-sm text-center py-4">No usage data yet</div>`;
@@ -2248,6 +2264,7 @@
                 if (todayCostEl) todayCostEl.textContent = '$0.00';
                 if (todayTokensEl) todayTokensEl.classList.add('hidden');
                 if (totalTokensEl) totalTokensEl.textContent = '0 tokens';
+                renderRecentCalls(recentCalls, formatTokenCount, formatLatency, recentEl);
                 return;
             }
 
@@ -2304,9 +2321,44 @@
                 const totalTokens = totals.input + totals.output;
                 totalTokensEl.textContent = `${formatTokenCount(totalTokens)} tokens`;
             }
+            renderRecentCalls(recentCalls, formatTokenCount, formatLatency, recentEl);
 
             // Render charts
             renderCharts(data);
+        }
+
+        function renderRecentCalls(calls, formatTokenCount, formatLatency, recentEl) {
+            if (!recentEl) return;
+            if (!Array.isArray(calls) || calls.length === 0) {
+                recentEl.innerHTML = `<div class="text-gray-500 text-sm text-center py-4">No recent calls</div>`;
+                return;
+            }
+
+            recentEl.innerHTML = calls.map((call, idx) => {
+                const routeRaw = (call.routeGroup || 'n/a').toLowerCase();
+                const routeLabel = routeRaw === 'fr'
+                    ? 'Flow Routing'
+                    : (routeRaw === 'ar' ? 'Account Routing' : call.routeGroup || 'n/a');
+                const requestedModel = call.requestedModel || '';
+                const actualModel = call.model || 'unknown';
+                const modelText = requestedModel && requestedModel !== actualModel
+                    ? `${requestedModel} -> ${actualModel}`
+                    : actualModel;
+                const ts = call.timestamp ? new Date(call.timestamp) : null;
+                const timeText = ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleTimeString() : '--:--:--';
+                return `
+                    <div class="py-2 border-b border-gray-800/30 last:border-0 flex items-center gap-3">
+                        <span class="text-xs text-gray-500 w-6 text-right">${idx + 1}.</span>
+                        <span class="text-sm font-semibold text-gray-200 min-w-[220px]">${modelText}</span>
+                        <span class="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300">${routeLabel}</span>
+                        <span class="text-xs text-gray-400">Latency: <span class="text-cyan-400">${formatLatency(call.latencyMs)}</span></span>
+                        <span class="text-xs text-gray-400">In: ${formatTokenCount(call.inputTokens || 0)}</span>
+                        <span class="text-xs text-gray-400">Out: ${formatTokenCount(call.outputTokens || 0)}</span>
+                        <span class="text-xs text-gray-300">Total: ${formatTokenCount(call.totalTokens || 0)}</span>
+                        <span class="text-xs text-gray-600 ml-auto">${timeText}</span>
+                    </div>
+                `;
+            }).join('');
         }
 
         // Chart instances for cleanup

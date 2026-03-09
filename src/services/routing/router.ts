@@ -11,7 +11,7 @@ import { getProviderModels, isHiddenCodexModel } from "./models"
 import { buildMessageStart, buildContentBlockStart, buildTextDelta, buildInputJsonDelta, buildContentBlockStop, buildMessageDelta, buildMessageStop } from "~/lib/translator"
 import { formatSuccessLine, setRequestLogContext } from "~/lib/logger"
 import type { AuthProvider } from "~/services/auth/types"
-import { recordUsage } from "~/services/usage-tracker"
+import { recordUsageWithMeta } from "~/services/usage-tracker"
 
 export class RoutingError extends Error {
     status: number
@@ -467,12 +467,16 @@ function advanceFlowCursor(flowState: FlowStickyState | null, entries: RoutingEn
     }
 }
 
-function recordProviderUsage(modelId: string, completion: ProviderUsage | null | undefined): void {
+function recordProviderUsage(
+    modelId: string,
+    completion: ProviderUsage | null | undefined,
+    meta?: { routeGroup?: string; latencyMs?: number; requestedModel?: string }
+): void {
     if (!completion?.usage) return
     const inputTokens = completion.usage.inputTokens ?? 0
     const outputTokens = completion.usage.outputTokens ?? 0
     if (inputTokens > 0 || outputTokens > 0) {
-        recordUsage(modelId, inputTokens, outputTokens)
+        recordUsageWithMeta(modelId, inputTokens, outputTokens, meta)
     }
 }
 
@@ -514,7 +518,7 @@ async function createFlowCompletionWithEntries(request: RoutedRequest, entries: 
         if (entry.provider === "codex") {
             const startTime = Date.now()
             const result = await createCodexCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-            recordProviderUsage(entry.modelId, result)
+            recordProviderUsage(entry.modelId, result, { routeGroup: "fr", latencyMs: Date.now() - startTime, requestedModel: request.model })
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
             console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "fr" }))
             return result
@@ -523,7 +527,7 @@ async function createFlowCompletionWithEntries(request: RoutedRequest, entries: 
         if (entry.provider === "copilot") {
             const startTime = Date.now()
             const result = await createCopilotCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens)
-            recordProviderUsage(entry.modelId, result)
+            recordProviderUsage(entry.modelId, result, { routeGroup: "fr", latencyMs: Date.now() - startTime, requestedModel: request.model })
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
             console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "fr" }))
             return result
@@ -651,7 +655,7 @@ async function createFlowCompletionWithEntries(request: RoutedRequest, entries: 
             if (entry.provider === "codex") {
                 const startTime = Date.now()
                 const result = await createCodexCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-                recordProviderUsage(entry.modelId, result)
+                recordProviderUsage(entry.modelId, result, { routeGroup: "fr", latencyMs: Date.now() - startTime, requestedModel: request.model })
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
                 console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "fr" }))
                 return result
@@ -660,7 +664,7 @@ async function createFlowCompletionWithEntries(request: RoutedRequest, entries: 
             if (entry.provider === "copilot") {
                 const startTime = Date.now()
                 const result = await createCopilotCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens)
-                recordProviderUsage(entry.modelId, result)
+                recordProviderUsage(entry.modelId, result, { routeGroup: "fr", latencyMs: Date.now() - startTime, requestedModel: request.model })
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
                 console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "fr" }))
                 return result
@@ -727,7 +731,7 @@ async function createAccountCompletionWithEntries(request: RoutedRequest, entrie
             if (entry.provider === "codex") {
                 const startTime = Date.now()
                 const result = await createCodexCompletion(account, request.model, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-                recordProviderUsage(request.model, result)
+                recordProviderUsage(request.model, result, { routeGroup: "ar", latencyMs: Date.now() - startTime, requestedModel: request.model })
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
                 console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "ar" }))
                 accountState.cursor = index
@@ -737,7 +741,7 @@ async function createAccountCompletionWithEntries(request: RoutedRequest, entrie
             if (entry.provider === "copilot") {
                 const startTime = Date.now()
                 const result = await createCopilotCompletion(account, request.model, request.messages, request.tools, request.maxTokens)
-                recordProviderUsage(request.model, result)
+                recordProviderUsage(request.model, result, { routeGroup: "ar", latencyMs: Date.now() - startTime, requestedModel: request.model })
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
                 console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "ar" }))
                 accountState.cursor = index
@@ -798,17 +802,21 @@ export async function createRoutedCompletion(request: RoutedRequest) {
     }
     const normalizedRequest = normalizedModel === request.model ? request : { ...request, model: normalizedModel }
     const config = loadRoutingConfig()
-    const activeFlow = resolveActiveFlowSelection(config)
-    if (activeFlow) {
-        return createFlowCompletionWithEntries(normalizedRequest, activeFlow.entries, activeFlow.flowKey)
-    }
     if (isOfficialModel(normalizedModel)) {
         const accountEntries = resolveAccountEntries(config, normalizedModel)
         return createAccountCompletionWithEntries(normalizedRequest, accountEntries)
     }
 
-    const flowSelection = resolveFlowSelection(config, normalizedRequest.model)
-    return createFlowCompletionWithEntries(normalizedRequest, flowSelection.entries, flowSelection.flowKey)
+    try {
+        const flowSelection = resolveFlowSelection(config, normalizedRequest.model)
+        return createFlowCompletionWithEntries(normalizedRequest, flowSelection.entries, flowSelection.flowKey)
+    } catch (error) {
+        const activeFlow = resolveActiveFlowSelection(config)
+        if (activeFlow) {
+            return createFlowCompletionWithEntries(normalizedRequest, activeFlow.entries, activeFlow.flowKey)
+        }
+        throw error
+    }
 }
 
 async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, entries: RoutingEntry[], flowKey?: string): AsyncGenerator<string, void, unknown> {
@@ -870,7 +878,7 @@ async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, en
         yield buildMessageDelta(completion.stopReason || "end_turn", completion.usage)
         yield buildMessageStop()
 
-        recordProviderUsage(entry.modelId, completion)
+        recordProviderUsage(entry.modelId, completion, { routeGroup: "fr", latencyMs: Date.now() - startTime, requestedModel: request.model })
 
         if (entry.provider === "codex") {
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
@@ -1031,14 +1039,14 @@ async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, en
         yield buildMessageDelta(completion.stopReason || "end_turn", completion.usage)
         yield buildMessageStop()
 
-        recordProviderUsage(entry.modelId, completion)
+        recordProviderUsage(entry.modelId, completion, { routeGroup: "fr", latencyMs: Date.now() - startTime, requestedModel: request.model })
 
         if (entry.provider === "codex") {
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "ar" }))
+            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "fr" }))
         } else if (entry.provider === "copilot") {
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "ar" }))
+            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "fr" }))
         }
         return
     }
@@ -1130,7 +1138,7 @@ async function* createAccountCompletionStreamWithEntries(request: RoutedRequest,
             yield buildMessageDelta(completion.stopReason || "end_turn", completion.usage)
             yield buildMessageStop()
 
-            recordProviderUsage(request.model, completion)
+            recordProviderUsage(request.model, completion, { routeGroup: "ar", latencyMs: Date.now() - startTime, requestedModel: request.model })
 
             if (entry.provider === "codex") {
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
@@ -1195,12 +1203,6 @@ export async function* createRoutedCompletionStream(request: RoutedRequest): Asy
         throw new RoutingError("Model is not available", 400)
     }
     const config = loadRoutingConfig()
-    const activeFlow = resolveActiveFlowSelection(config)
-    if (activeFlow) {
-        yield* createFlowCompletionStreamWithEntries(request, activeFlow.entries, activeFlow.flowKey)
-        return
-    }
-
     if (isOfficialModel(normalizedModel)) {
         const accountEntries = resolveAccountEntries(config, normalizedModel)
         const normalizedRequest = { ...request, model: normalizedModel }
@@ -1208,6 +1210,16 @@ export async function* createRoutedCompletionStream(request: RoutedRequest): Asy
         return
     }
 
-    const flowSelection = resolveFlowSelection(config, request.model)
-    yield* createFlowCompletionStreamWithEntries(request, flowSelection.entries, flowSelection.flowKey)
+    try {
+        const flowSelection = resolveFlowSelection(config, request.model)
+        yield* createFlowCompletionStreamWithEntries(request, flowSelection.entries, flowSelection.flowKey)
+        return
+    } catch (error) {
+        const activeFlow = resolveActiveFlowSelection(config)
+        if (activeFlow) {
+            yield* createFlowCompletionStreamWithEntries(request, activeFlow.entries, activeFlow.flowKey)
+            return
+        }
+        throw error
+    }
 }
