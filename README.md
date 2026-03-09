@@ -155,7 +155,7 @@ Notes:
 - If Copilot TLS fails in restricted networks, set `ANTI_API_COPILOT_INSECURE_TLS=1` (not recommended for general use).
 - If Codex TLS fails in restricted networks, set `ANTI_API_CODEX_INSECURE_TLS=1` (not recommended for general use).
 - Set Codex default reasoning effort with `ANTI_API_CODEX_REASONING_EFFORT=low|medium|high` (default: `medium`).
-- If Docker Hub is unstable, the default base image uses GHCR. You can override with `BUN_IMAGE=oven/bun:1.1.38`.
+- The default base image uses Docker Hub `oven/bun:1.1.38`. If that registry is unstable in your network, override it with `BUN_IMAGE=ghcr.io/oven-sh/bun:1.1.38`.
  - ngrok will auto-download inside the container if missing (Linux only).
 
 ## Development

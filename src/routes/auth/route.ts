@@ -7,7 +7,7 @@ import { isAuthenticated, getUserInfo, setAuth, clearAuth, startOAuthLogin } fro
 import { accountManager } from "~/services/antigravity/account-manager"
 import { state } from "~/lib/state"
 import { authStore } from "~/services/auth/store"
-import { debugCodexOAuth, importCodexAuthSources, startCodexCliLogin, getCodexCliLoginStatus } from "~/services/codex/oauth"
+import { debugCodexOAuth, importCodexAuthSources, startCodexOAuthSession, pollCodexOAuthSession } from "~/services/codex/oauth"
 import { startCopilotDeviceFlow, pollCopilotSession, importCopilotAuthFiles } from "~/services/copilot/oauth"
 import { getIdeAuthStatus, logoutIdeSession } from "~/services/antigravity/ide-switch"
 
@@ -88,20 +88,17 @@ authRouter.post("/login", async (c) => {
 
         if (provider === "codex") {
             if (forceInteractive) {
-                // 使用浏览器 OAuth 登录获取完整权限的 token
                 try {
-                    const { startCodexOAuthLogin } = await import("~/services/codex/oauth")
-                    const account = await startCodexOAuthLogin()
+                    const session = startCodexOAuthSession()
                     return c.json({
                         success: true,
                         provider: "codex",
-                        status: "success",
+                        status: "pending",
                         source: "browser-oauth",
-                        account: {
-                            id: account.id,
-                            email: account.email,
-                            source: account.authSource,
-                        },
+                        state: session.state,
+                        auth_url: session.authUrl,
+                        fallback_url: session.fallbackUrl,
+                        expires_at: session.expiresAt,
                     })
                 } catch (error) {
                     return c.json({ success: false, error: (error as Error).message }, 400)
@@ -124,10 +121,22 @@ authRouter.post("/login", async (c) => {
                     })),
                 })
             }
-            return c.json({
-                success: false,
-                error: "Codex auth files not found. Use force=true to login via browser.",
-            }, 400)
+
+            try {
+                const session = startCodexOAuthSession()
+                return c.json({
+                    success: true,
+                    provider: "codex",
+                    status: "pending",
+                    source: "browser-oauth",
+                    state: session.state,
+                    auth_url: session.authUrl,
+                    fallback_url: session.fallbackUrl,
+                    expires_at: session.expiresAt,
+                })
+            } catch (error) {
+                return c.json({ success: false, error: (error as Error).message }, 400)
+            }
         }
 
         // 默认 Antigravity
@@ -198,10 +207,26 @@ authRouter.get("/copilot/status", async (c) => {
 
 authRouter.get("/codex/status", async (c) => {
     const sessionId = c.req.query("session_id")
-    if (!sessionId) {
-        return c.json({ success: false, error: "session_id required" }, 400)
+    const state = c.req.query("state")
+    if (!sessionId && !state) {
+        return c.json({ success: false, error: "session_id or state required" }, 400)
     }
-    const result = await getCodexCliLoginStatus(sessionId)
+
+    if (state) {
+        const result = await pollCodexOAuthSession(state)
+        return c.json({
+            success: result.status !== "error",
+            status: result.status,
+            message: result.message,
+            account: result.account ? {
+                id: result.account.id,
+                email: result.account.email,
+                source: result.account.authSource,
+            } : undefined,
+        })
+    }
+    const { getCodexCliLoginStatus } = await import("~/services/codex/oauth")
+    const result = await getCodexCliLoginStatus(sessionId!)
     return c.json({
         success: result.status !== "error",
         status: result.status,

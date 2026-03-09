@@ -1722,6 +1722,7 @@
                 }
 
                 let accounts = data.accounts || [];
+                finalizeCodexAuthIfReady(accounts);
                 const planInfo = document.getElementById('plan-info');
                 planInfo.innerHTML = `<span class="text-gray-300">${accounts.length} account(s)</span> <span class="text-gray-600 text-xs">• Tap to ping account</span>`;
 
@@ -1883,12 +1884,15 @@
             status.classList.remove('hidden');
         }
 
-        function saveCodexSession(sessionId, data = {}) {
-            if (!sessionId) return;
+        function saveCodexSession(id, data = {}) {
+            const state = data.state || null;
+            const sessionId = data.session_id || id || null;
+            if (!sessionId && !state) return;
             const payload = {
                 sessionId,
+                state,
                 user_code: data.user_code || null,
-                verification_uri: data.verification_uri || null,
+                verification_uri: data.verification_uri || data.auth_url || data.authUrl || data.fallback_url || data.fallbackUrl || null,
                 updatedAt: Date.now(),
             };
             try {
@@ -1902,6 +1906,25 @@
             } catch { }
         }
 
+        function closeCodexPopup() {
+            if (codexPopup && !codexPopup.closed) {
+                codexPopup.close();
+            }
+            codexPopup = null;
+            codexPopupUrl = null;
+        }
+
+        function finalizeCodexAuthIfReady(accounts = []) {
+            const stored = loadCodexSession();
+            if (!stored) return;
+            const hasCodexAccount = Array.isArray(accounts) && accounts.some(acc => acc.provider === 'codex');
+            if (!hasCodexAccount) return;
+            closeCodexPopup();
+            closeAddAccountModal();
+            clearCodexSession();
+            window._loginInProgress = false;
+        }
+
         function loadCodexSession() {
             try {
                 const raw = localStorage.getItem(CODEX_SESSION_KEY);
@@ -1913,13 +1936,13 @@
 
         async function resumeCodexSession() {
             const stored = loadCodexSession();
-            if (!stored || !stored.sessionId) return;
+            if (!stored || (!stored.sessionId && !stored.state)) return;
             openAddAccountModal();
             setAddAccountStatus('Resuming Codex authentication...');
             if (stored.user_code || stored.verification_uri) {
                 showCodexDeviceFlow(stored);
             }
-            await pollCodexStatus(stored.sessionId);
+            await pollCodexStatus(stored);
         }
 
         async function startProviderLogin(provider) {
@@ -1942,6 +1965,9 @@
                 const data = await response.json();
 
                 if (!data.success) {
+                    if (provider === 'codex') {
+                        closeCodexPopup();
+                    }
                     setAddAccountStatus(data.error || 'Authentication failed');
                     return;
                 }
@@ -1959,7 +1985,7 @@
                 }
 
                 if (provider === 'codex' && data.status === 'pending') {
-                    saveCodexSession(data.session_id, data);
+                    saveCodexSession(data.session_id || data.state, data);
                     showCodexDeviceFlow(data);
                     return;
                 }
@@ -1979,6 +2005,9 @@
                 await checkAuthStatus();
                 refreshAll(true);
             } catch (error) {
+                if (provider === 'codex') {
+                    closeCodexPopup();
+                }
                 setAddAccountStatus(`Authentication error: ${error.message}`);
             }
         }
@@ -2001,12 +2030,13 @@
             const device = document.getElementById('codex-device');
             const codeEl = document.getElementById('codex-code');
             device.classList.remove('hidden');
-            codeEl.textContent = data.user_code || '----';
-            if (data.verification_uri) {
-                openCodexVerification(data.verification_uri);
+            codeEl.textContent = data.user_code || 'Open the authentication page';
+            const authUrl = data.verification_uri || data.auth_url || data.authUrl || data.fallback_url || data.fallbackUrl;
+            if (authUrl) {
+                openCodexVerification(authUrl);
             }
-            setAddAccountStatus('Waiting for Codex CLI authorization...');
-            pollCodexStatus(data.session_id);
+            setAddAccountStatus('Waiting for Codex authorization...');
+            pollCodexStatus(data);
         }
 
         async function pollCopilotStatus(deviceCode, intervalSeconds) {
@@ -2033,13 +2063,21 @@
             showToast(`Copied: ${code}`);
         }
 
-        async function pollCodexStatus(sessionId) {
-            if (!sessionId) return;
-            const status = await fetch(`${API_BASE}/auth/codex/status?session_id=${sessionId}`);
+        async function pollCodexStatus(session) {
+            const sessionId = typeof session === 'string' ? session : session?.sessionId || session?.session_id || null;
+            const state = typeof session === 'object' ? (session?.state || null) : null;
+            if (!sessionId && !state) return;
+            const query = state
+                ? `state=${encodeURIComponent(state)}`
+                : `session_id=${encodeURIComponent(sessionId)}`;
+            const status = await fetch(`${API_BASE}/auth/codex/status?${query}`);
             const data = await status.json();
             if (data.status === 'success') {
+                closeCodexPopup();
                 if (data.accounts && data.accounts.length > 1) {
                     setAddAccountStatus(`Imported ${data.accounts.length} Codex accounts`);
+                } else if (data.account) {
+                    setAddAccountStatus(`Connected: ${data.account.email || data.account.id || 'Codex'}`);
                 } else {
                     const first = (data.accounts && data.accounts[0]) || {};
                     setAddAccountStatus(`Connected: ${first.email || first.id || 'Codex'}`);
@@ -2051,6 +2089,7 @@
                 return;
             }
             if (data.status === 'error') {
+                closeCodexPopup();
                 setAddAccountStatus(data.message || 'Codex authentication failed');
                 clearCodexSession();
                 return;
@@ -2058,9 +2097,9 @@
             if (data.user_code && data.verification_uri) {
                 document.getElementById('codex-code').textContent = data.user_code;
                 openCodexVerification(data.verification_uri);
-                saveCodexSession(sessionId, data);
+                saveCodexSession(sessionId || state, { ...data, state, session_id: sessionId });
             }
-            setTimeout(() => pollCodexStatus(sessionId), 2000);
+            setTimeout(() => pollCodexStatus({ sessionId, state }), 2000);
         }
 
         function copyCodexCode() {
