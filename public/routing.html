@@ -582,7 +582,7 @@
             activeFlow: 'anti-api-active-flow',
             privacyMode: 'anti-api-privacy-mode',
         };
-        const PROVIDER_ORDER = ['antigravity', 'codex', 'copilot'];
+        const PROVIDER_ORDER = ['antigravity', 'codex', 'copilot', 'zed'];
         const MODEL_GROUPS = {
             claudeGpt: ['claude-sonnet-4-5', 'claude-sonnet-4-5-thinking', 'claude-opus-4-5-thinking', 'claude-opus-4-6-thinking', 'gpt-oss-120b'],
             gpro: ['gemini-3-pro-low', 'gemini-3-pro-high'],
@@ -836,7 +836,7 @@
                 const rawLabel = entry.accountLabel || entry.accountId;
                 const display = entry.accountId === 'auto'
                     ? 'Auto (Smart Switch)'
-                    : (entry.provider === 'copilot' ? maskUsername(rawLabel) : maskEmail(rawLabel));
+                    : ((entry.provider === 'copilot' || entry.provider === 'zed') ? maskUsername(rawLabel) : maskEmail(rawLabel));
                 card.innerHTML = `
                     <div>
                         <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500">${entry.provider}</div>
@@ -1162,7 +1162,7 @@
                     const storedValue = localStorage.getItem(collapseKey);
                     const isCollapsed = storedValue === null ? true : storedValue === 'true';
 
-                    const maskedDisplayName = provider === 'copilot' ? maskUsername(account.displayName) : maskEmail(account.displayName);
+                    const maskedDisplayName = provider === 'copilot' || provider === 'zed' ? maskUsername(account.displayName) : maskEmail(account.displayName);
 
                     const header = document.createElement('div');
                     header.className = 'flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity';
@@ -1257,7 +1257,7 @@
                 node.addEventListener('drop', onNodeDrop);
                 // Apply privacy masking to account label
                 const rawAccountLabel = entry.accountLabel || entry.accountId;
-                const maskedAccountLabel = entry.provider === 'copilot' ? maskUsername(rawAccountLabel) : maskEmail(rawAccountLabel);
+                const maskedAccountLabel = entry.provider === 'copilot' || entry.provider === 'zed' ? maskUsername(rawAccountLabel) : maskEmail(rawAccountLabel);
 
                 node.innerHTML = `
                     <div class="flex items-center justify-between">

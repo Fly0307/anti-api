@@ -23,6 +23,8 @@
 
 - **Per-account model fetch (Routing)** - Model lists are now fetched from each logged-in Codex/Copilot account instead of relying on static presets
 - **Antigravity fetch integration (single account)** - Routing now attempts live model fetch from the first available Antigravity account and falls back safely when unavailable
+- **Zed hosted-model support** - You can now import the current Zed.app login state and route requests to Zed-hosted models
+- **Zed multi-account behavior clarified** - Zed accounts can be imported one by one and kept in Anti-API, but unlike Codex/Copilot they cannot be auto-discovered in bulk from local auth files
 - **Account-level model map in `/routing/config`** - Added `accountModels` so the UI can render account-specific model lists directly
 - **Routing panel model rendering update** - Account cards now show models from fetched account-level data first, then fallback models
 
@@ -30,6 +32,8 @@
 
 - **按账号动态拉取模型（Routing）** - Codex/Copilot 的模型列表改为从每个已登录账号实时拉取，不再依赖静态预设
 - **Antigravity 拉取接入（单账号）** - Routing 会尝试用首个可用 Antigravity 账号拉取模型，失败时自动回退
+- **新增 Zed 托管模型支持** - 现在可以导入当前 Zed.app 的登录态，并将请求路由到 Zed 提供的模型
+- **明确 Zed 多账号边界** - Zed 账号可以逐个导入并保存在 Anti-API 中，但不能像 Codex/Copilot 一样从本地认证文件里自动批量发现
 - **`/routing/config` 增加账号级模型映射** - 新增 `accountModels` 字段，前端可直接按账号渲染模型
 - **Routing 面板渲染升级** - 账号卡片优先展示账号级拉取模型，再使用兜底模型
 
@@ -78,11 +82,30 @@
 ## Features
 
 - **Flow + Account Routing** - Custom flows for non-official models, account chains for official models
+- **Four Providers** - Antigravity, Codex, GitHub Copilot, and Zed hosted models
 - **Remote Access** - ngrok/cloudflared/localtunnel with one-click setup
 - **Full Dashboard** - Quota monitoring, routing config, settings panel
 - **Auto-Rotation** - Account switching on 429 errors
 - **Dual Format** - OpenAI and Anthropic API compatible
 - **Tool Calling** - Function calling for Claude Code and CLI tools
+
+## Zed Account Notes
+
+- **Import model** - Anti-API reads the currently signed-in `Zed.app` account from macOS Keychain when you click `Add Account -> Zed`
+- **Why it differs from Codex/Copilot** - Zed does not expose multiple local auth files that can be scanned in bulk; the local desktop state is effectively a single current login
+- **What multi-account means for Zed here** - You can switch accounts inside Zed and import them one at a time into Anti-API; imported Zed accounts remain stored in Anti-API afterwards
+- **What is not supported** - Automatic bulk discovery of many Zed accounts from one machine is not available in the same way as Codex/Copilot
+- **Quota monitor behavior** - Zed hosted models share one monthly spend pool across the account. Anti-API currently shows hosted access status and billing period, not exact remaining dollar credits
+- **Credit note** - Zed plan credit depends on the plan type. For example, Zed Student is documented by Zed as including $10/month in AI token credits, while standard Pro pages may show different included credit values
+
+## Zed 账号说明
+
+- **导入方式** - 点击 `Add Account -> Zed` 时，Anti-API 会读取当前 `Zed.app` 在 macOS Keychain 中的登录态
+- **为什么和 Codex/Copilot 不同** - Zed 本地没有像 Codex/Copilot 那样可批量扫描的多账号认证文件，桌面端本质上更接近“当前单登录态”
+- **这里的多账号含义** - 你可以先在 Zed 内切换账号，再逐个导入到 Anti-API；导入后的 Zed 账号会继续保存在 Anti-API 内
+- **当前不支持的能力** - 不能像 Codex/Copilot 一样，直接从一台机器上自动批量发现多个 Zed 本地账号
+- **额度监控说明** - Zed 的 hosted models 共用同一个月度消耗池。Anti-API 当前展示的是 hosted access 状态和订阅周期，不是精确的剩余美元额度
+- **Credit 说明** - Zed 的月度 credit 取决于具体计划类型。例如 Zed Student 官方说明为每月 $10 AI token credits，而普通 Pro 页面可能显示不同额度
 
 ## Free Gemini Pro Access
 
@@ -209,11 +232,15 @@ Supported tunnels:
 │  │ Antigravity  │  │    Codex     │  │   Copilot    │      │
 │  │   Provider   │  │   Provider   │  │   Provider   │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
+│  ┌──────────────┐                                        │
+│  │     Zed      │                                        │
+│  │   Provider   │                                        │
+│  └──────────────┘                                        │
 └─────────────────────────────────────────────────────────────┘
                            ▼
               ┌──────────────────────────┐
               │   Upstream Cloud APIs    │
-              │ (Google, OpenAI, GitHub) │
+              │ (Google, OpenAI, GitHub, Zed) │
               └──────────────────────────┘
 ```
 
@@ -230,7 +257,7 @@ This enables fine-grained control over model-to-account mapping, allowing you to
 
 - **Load Balance**: Distribute requests across multiple accounts
 - **Model Specialization**: Route specific models to dedicated accounts
-- **Provider Mixing**: Combine Antigravity, Codex, and Copilot in custom flows
+- **Provider Mixing**: Combine Antigravity, Codex, GitHub Copilot, and Zed in custom flows
 - **Fallback Chains**: Automatic failover when primary accounts hit rate limits
 
 ### How It Works

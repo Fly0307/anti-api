@@ -10,6 +10,7 @@ import { authStore } from "~/services/auth/store"
 import { debugCodexOAuth, importCodexAuthSources, startCodexCliLogin, getCodexCliLoginStatus } from "~/services/codex/oauth"
 import { startCopilotDeviceFlow, pollCopilotSession, importCopilotAuthFiles } from "~/services/copilot/oauth"
 import { getIdeAuthStatus, logoutIdeSession } from "~/services/antigravity/ide-switch"
+import { importZedLocalAccount } from "~/services/zed/oauth"
 
 export const authRouter = new Hono()
 
@@ -30,6 +31,7 @@ authRouter.get("/accounts", (c) => {
             antigravity: authStore.listSummaries("antigravity"),
             codex: authStore.listSummaries("codex"),
             copilot: authStore.listSummaries("copilot"),
+            zed: authStore.listSummaries("zed"),
         },
     })
 })
@@ -128,6 +130,22 @@ authRouter.post("/login", async (c) => {
                 success: false,
                 error: "Codex auth files not found. Use force=true to login via browser.",
             }, 400)
+        }
+
+        if (provider === "zed") {
+            const account = await importZedLocalAccount()
+            return c.json({
+                success: true,
+                provider: "zed",
+                status: "success",
+                source: "local-import",
+                account: {
+                    id: account.id,
+                    login: account.login,
+                    label: account.label,
+                    source: account.authSource,
+                },
+            })
         }
 
         // 默认 Antigravity

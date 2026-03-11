@@ -4,6 +4,7 @@ import { createChatCompletionWithOptions, createChatCompletionStreamWithOptions 
 import { accountManager } from "~/services/antigravity/account-manager"
 import { createCodexCompletion, isCodexModelSupportedForAccount, isCodexUnsupportedModelError } from "~/services/codex/chat"
 import { createCopilotCompletion } from "~/services/copilot/chat"
+import { createZedCompletion } from "~/services/zed/chat"
 import { authStore } from "~/services/auth/store"
 import type { ProviderAccount } from "~/services/auth/types"
 import { loadRoutingConfig, type RoutingEntry, type RoutingConfig, type AccountRoutingEntry } from "./config"
@@ -72,7 +73,7 @@ function isEntryUsable(entry: RoutingEntry): boolean {
 
 // 🆕 Router 级别的 rate-limit 状态（独立于 accountManager）
 const routerRateLimits = new Map<string, number>()  // "provider:accountId" -> expiry timestamp
-const PROVIDER_ORDER: AuthProvider[] = ["antigravity", "codex", "copilot"]
+const PROVIDER_ORDER: AuthProvider[] = ["antigravity", "codex", "copilot", "zed"]
 const flowStickyStates = new Map<string, FlowStickyState>()
 const accountStickyStates = new Map<string, AccountStickyState>()
 
@@ -476,6 +477,24 @@ function recordProviderUsage(modelId: string, completion: ProviderUsage | null |
     }
 }
 
+async function createHostedProviderCompletion(
+    provider: Exclude<AuthProvider, "antigravity">,
+    account: ProviderAccount,
+    model: string,
+    request: RoutedRequest
+) {
+    if (provider === "codex") {
+        return createCodexCompletion(account, model, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
+    }
+    if (provider === "copilot") {
+        return createCopilotCompletion(account, model, request.messages, request.tools, request.maxTokens)
+    }
+    if (provider === "zed") {
+        return createZedCompletion(account, model, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
+    }
+    throw new Error("Unsupported provider")
+}
+
 function shouldProbeFlowHead(flowState: FlowStickyState | null, error: UpstreamError): boolean {
     if (!flowState || error.status !== 429) return false
     if (!isQuotaExhausted(error)) return false
@@ -511,25 +530,12 @@ async function createFlowCompletionWithEntries(request: RoutedRequest, entries: 
         const accountDisplay = account.login || account.email || entry.accountId
         setRequestLogContext({ model: entry.modelId, provider: entry.provider, account: accountDisplay, routeTag: "fr" })
 
-        if (entry.provider === "codex") {
-            const startTime = Date.now()
-            const result = await createCodexCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-            recordProviderUsage(entry.modelId, result)
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "fr" }))
-            return result
-        }
-
-        if (entry.provider === "copilot") {
-            const startTime = Date.now()
-            const result = await createCopilotCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens)
-            recordProviderUsage(entry.modelId, result)
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "fr" }))
-            return result
-        }
-
-        throw new Error("Unsupported provider")
+        const startTime = Date.now()
+        const result = await createHostedProviderCompletion(entry.provider, account, entry.modelId, request)
+        recordProviderUsage(entry.modelId, result)
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+        console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "fr" }))
+        return result
     }
 
     for (let index = startIndex; index < entries.length; index++) {
@@ -648,23 +654,12 @@ async function createFlowCompletionWithEntries(request: RoutedRequest, entries: 
             const accountDisplay = account.login || account.email || entry.accountId
             setRequestLogContext({ model: entry.modelId, provider: entry.provider, account: accountDisplay, routeTag: "fr" })
 
-            if (entry.provider === "codex") {
-                const startTime = Date.now()
-                const result = await createCodexCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-                recordProviderUsage(entry.modelId, result)
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-                console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "fr" }))
-                return result
-            }
-
-            if (entry.provider === "copilot") {
-                const startTime = Date.now()
-                const result = await createCopilotCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens)
-                recordProviderUsage(entry.modelId, result)
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-                console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "fr" }))
-                return result
-            }
+            const startTime = Date.now()
+            const result = await createHostedProviderCompletion(entry.provider, account, entry.modelId, request)
+            recordProviderUsage(entry.modelId, result)
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+            console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "fr" }))
+            return result
         } catch (error) {
             lastError = error as Error
             throw error
@@ -724,25 +719,13 @@ async function createAccountCompletionWithEntries(request: RoutedRequest, entrie
             const accountDisplay = account.login || account.email || entry.accountId
             setRequestLogContext({ model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "ar" })
 
-            if (entry.provider === "codex") {
-                const startTime = Date.now()
-                const result = await createCodexCompletion(account, request.model, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-                recordProviderUsage(request.model, result)
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-                console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "ar" }))
-                accountState.cursor = index
-                return result
-            }
-
-            if (entry.provider === "copilot") {
-                const startTime = Date.now()
-                const result = await createCopilotCompletion(account, request.model, request.messages, request.tools, request.maxTokens)
-                recordProviderUsage(request.model, result)
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-                console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "ar" }))
-                accountState.cursor = index
-                return result
-            }
+            const startTime = Date.now()
+            const result = await createHostedProviderCompletion(entry.provider, account, request.model, request)
+            recordProviderUsage(request.model, result)
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+            console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "ar" }))
+            accountState.cursor = index
+            return result
         } catch (error) {
             lastError = error as Error
             if (entry.provider === "antigravity" && isAccountUnavailableError(error)) {
@@ -836,15 +819,8 @@ async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, en
         const accountDisplay = account.login || account.email || entry.accountId
         setRequestLogContext({ model: entry.modelId, provider: entry.provider, account: accountDisplay, routeTag: "fr" })
 
-        let completion
-        let startTime = 0
-        if (entry.provider === "codex") {
-            startTime = Date.now()
-            completion = await createCodexCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-        } else if (entry.provider === "copilot") {
-            startTime = Date.now()
-            completion = await createCopilotCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens)
-        }
+        const startTime = Date.now()
+        const completion = await createHostedProviderCompletion(entry.provider, account, entry.modelId, request)
 
         if (!completion) {
             throw new Error("Empty completion")
@@ -872,13 +848,8 @@ async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, en
 
         recordProviderUsage(entry.modelId, completion)
 
-        if (entry.provider === "codex") {
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "fr" }))
-        } else if (entry.provider === "copilot") {
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "fr" }))
-        }
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+        console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "fr" }))
     }
 
     for (let index = startIndex; index < entries.length; index++) {
@@ -997,15 +968,8 @@ async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, en
         const accountDisplay = account.login || account.email || entry.accountId
         setRequestLogContext({ model: entry.modelId, provider: entry.provider, account: accountDisplay, routeTag: "fr" })
 
-        let completion
-        let startTime = 0
-        if (entry.provider === "codex") {
-            startTime = Date.now()
-            completion = await createCodexCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-        } else if (entry.provider === "copilot") {
-            startTime = Date.now()
-            completion = await createCopilotCompletion(account, entry.modelId, request.messages, request.tools, request.maxTokens)
-        }
+        const startTime = Date.now()
+        const completion = await createHostedProviderCompletion(entry.provider, account, entry.modelId, request)
 
         if (!completion) {
             throw new Error("Empty completion")
@@ -1033,13 +997,8 @@ async function* createFlowCompletionStreamWithEntries(request: RoutedRequest, en
 
         recordProviderUsage(entry.modelId, completion)
 
-        if (entry.provider === "codex") {
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "ar" }))
-        } else if (entry.provider === "copilot") {
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-            console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "ar" }))
-        }
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+        console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "ar" }))
         return
     }
 
@@ -1096,15 +1055,8 @@ async function* createAccountCompletionStreamWithEntries(request: RoutedRequest,
             const accountDisplay = account.login || account.email || entry.accountId
             setRequestLogContext({ model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "ar" })
 
-            let completion
-            let startTime = 0
-            if (entry.provider === "codex") {
-                startTime = Date.now()
-                completion = await createCodexCompletion(account, request.model, request.messages, request.tools, request.maxTokens, request.reasoningEffort)
-            } else if (entry.provider === "copilot") {
-                startTime = Date.now()
-                completion = await createCopilotCompletion(account, request.model, request.messages, request.tools, request.maxTokens)
-            }
+            const startTime = Date.now()
+            const completion = await createHostedProviderCompletion(entry.provider, account, request.model, request)
 
             if (!completion) {
                 throw new Error("Empty completion")
@@ -1132,13 +1084,8 @@ async function* createAccountCompletionStreamWithEntries(request: RoutedRequest,
 
             recordProviderUsage(request.model, completion)
 
-            if (entry.provider === "codex") {
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-                console.log(formatSuccessLine({ elapsed, model: request.model, provider: "codex", account: accountDisplay, routeTag: "ar" }))
-            } else if (entry.provider === "copilot") {
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-                console.log(formatSuccessLine({ elapsed, model: request.model, provider: "copilot", account: accountDisplay, routeTag: "ar" }))
-            }
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+            console.log(formatSuccessLine({ elapsed, model: request.model, provider: entry.provider, account: accountDisplay, routeTag: "ar" }))
             accountState.cursor = index
             return
         } catch (error) {

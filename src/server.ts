@@ -19,6 +19,7 @@ import { getAggregatedQuota } from "./services/quota-aggregator"
 import { initAuth, isAuthenticated } from "./services/antigravity/login"
 import { accountManager } from "./services/antigravity/account-manager"
 import { loadRoutingConfig } from "./services/routing/config"
+import { getProviderModels } from "./services/routing/models"
 import { importCodexAuthSources, removeCodexAuthArtifacts } from "./services/codex/oauth"
 import { loadSettings, saveSettings } from "./services/settings"
 import { pingAccount } from "./services/ping"
@@ -53,6 +54,7 @@ server.use(async (c, next) => {
                     copilot: "GitHub Copilot",
                     codex: "ChatGPT Codex",
                     antigravity: "Antigravity",
+                    zed: "Zed",
                 }
                 const providerName = providerNames[ctx.provider] || ctx.provider
                 const accountPart = ctx.account ? ` >> ${ctx.account}` : ""
@@ -169,8 +171,15 @@ const modelsHandler = (c: any) => {
         name: `Route: ${flow.name}`,
         owned_by: "routing",
     }))
+    const providerModels = ["antigravity", "codex", "copilot", "zed"].flatMap((provider) =>
+        getProviderModels(provider as any).map(model => ({
+            id: model.id,
+            name: model.label,
+            owned_by: provider,
+        }))
+    )
     const seen = new Set<string>()
-    const models = [...AVAILABLE_MODELS, ...routeModels].filter(model => {
+    const models = [...AVAILABLE_MODELS, ...providerModels, ...routeModels].filter(model => {
         if (seen.has(model.id)) return false
         seen.add(model.id)
         return true
@@ -235,7 +244,7 @@ server.post("/accounts/ping", async (c) => {
     if (!provider || !accountId) {
         return c.json({ success: false, error: "provider and accountId are required" }, 400)
     }
-    if (!["antigravity", "codex", "copilot"].includes(provider)) {
+    if (!["antigravity", "codex", "copilot", "zed"].includes(provider)) {
         return c.json({ success: false, error: "Unsupported provider" }, 400)
     }
 
@@ -287,7 +296,7 @@ server.delete("/accounts/:id", async (c) => {
     // 这覆盖了 token 过期或通过其他方式添加的账号
     if (!success) {
         // 尝试所有 provider 类型
-        for (const provider of ["antigravity", "codex", "copilot"] as const) {
+        for (const provider of ["antigravity", "codex", "copilot", "zed"] as const) {
             if (authStore.deleteAccount(provider, accountId)) {
                 success = true
                 break
