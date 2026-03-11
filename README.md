@@ -19,23 +19,41 @@
 
 > **Disclaimer**: This project is based on reverse engineering of Antigravity. Future compatibility is not guaranteed. For long-term use, avoid updating Antigravity.
 
-## What's New (v2.7.1)
+## What's New (v2.8.0)
+
+- **Zed hosted-model support** - Anti-API can now import the current Zed.app login state and route requests to Zed-hosted models
+- **Per-account dynamic model fetch** - Routing fetches live models from each available Codex and Copilot account, and now includes Zed account-level model sync
+- **Zed account behavior clarified** - Zed accounts can be imported one by one and kept in Anti-API, but they cannot be bulk auto-discovered like Codex/Copilot
+- **Zed quota widget updated** - The Zed card now shows shared all-model support status and billing-period timing instead of misleading remaining-credit percentages
+- **Zed stability hardening** - Added request timeouts and success-state recovery for Zed account fetch, model sync, and completion requests
+
+## 更新说明 (v2.8.0)
+
+- **新增 Zed 托管模型支持** - Anti-API 现在可以导入当前 Zed.app 的登录态，并将请求路由到 Zed 提供的模型
+- **按账号动态拉取模型** - Routing 会从每个可用的 Codex 和 Copilot 账号实时拉取模型，并加入 Zed 的账号级模型同步
+- **明确 Zed 账号边界** - Zed 账号可以逐个导入并保存在 Anti-API 中，但不能像 Codex/Copilot 一样自动批量发现
+- **更新 Zed 配额卡片** - Zed 卡片改为展示共享的 all models 支持状态和订阅周期时间，不再用误导性的剩余额度百分比
+- **增强 Zed 稳定性** - 为 Zed 的账号读取、模型同步和 completion 请求增加了超时控制与成功后状态恢复
+
+<details>
+<summary>v2.7.1</summary>
 
 - **Per-account model fetch (Routing)** - Model lists are now fetched from each logged-in Codex/Copilot account instead of relying on static presets
 - **Antigravity fetch integration (single account)** - Routing now attempts live model fetch from the first available Antigravity account and falls back safely when unavailable
-- **Zed hosted-model support** - You can now import the current Zed.app login state and route requests to Zed-hosted models
-- **Zed multi-account behavior clarified** - Zed accounts can be imported one by one and kept in Anti-API, but unlike Codex/Copilot they cannot be auto-discovered in bulk from local auth files
 - **Account-level model map in `/routing/config`** - Added `accountModels` so the UI can render account-specific model lists directly
 - **Routing panel model rendering update** - Account cards now show models from fetched account-level data first, then fallback models
 
-## 更新说明 (v2.7.1)
+</details>
+
+<details>
+<summary>v2.7.1 中文</summary>
 
 - **按账号动态拉取模型（Routing）** - Codex/Copilot 的模型列表改为从每个已登录账号实时拉取，不再依赖静态预设
 - **Antigravity 拉取接入（单账号）** - Routing 会尝试用首个可用 Antigravity 账号拉取模型，失败时自动回退
-- **新增 Zed 托管模型支持** - 现在可以导入当前 Zed.app 的登录态，并将请求路由到 Zed 提供的模型
-- **明确 Zed 多账号边界** - Zed 账号可以逐个导入并保存在 Anti-API 中，但不能像 Codex/Copilot 一样从本地认证文件里自动批量发现
 - **`/routing/config` 增加账号级模型映射** - 新增 `accountModels` 字段，前端可直接按账号渲染模型
 - **Routing 面板渲染升级** - 账号卡片优先展示账号级拉取模型，再使用兜底模型
+
+</details>
 
 <details>
 <summary>v2.7.0</summary>
