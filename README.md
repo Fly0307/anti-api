@@ -101,7 +101,7 @@ bun run src/main.ts start
 
 ### Windows
 
-Double-click `anti-api-start.bat` to launch.
+Double-click `start.bat` to launch.
 
 ### macOS
 
