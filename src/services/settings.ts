@@ -3,7 +3,7 @@
  * Stores user preferences in a JSON file
  */
 
-import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "fs"
 import { join } from "path"
 import { ensureDataDir, getDataDir } from "~/lib/data-dir"
 
@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 function ensureSettingsDir(): void {
     ensureDataDir()
+    mkdirSync(SETTINGS_DIR, { recursive: true })
 }
 
 export function loadSettings(): AppSettings {

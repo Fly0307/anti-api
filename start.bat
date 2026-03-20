@@ -1,150 +1,230 @@
 @echo off
 chcp 65001 >nul
-setlocal enabledelayedexpansion
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-set UPDATE_MODE=0
-set UPDATE_ONLY=0
-:parse_args
-if "%~1"=="" goto after_args
-if /I "%~1"=="--update" set UPDATE_MODE=1
-if /I "%~1"=="-u" set UPDATE_MODE=1
-if /I "%~1"=="--update-only" (
-    set UPDATE_MODE=1
-    set UPDATE_ONLY=1
-)
-shift
-goto parse_args
-:after_args
+set "PORT=8964"
+set "RUST_PROXY_PORT=8965"
+set "RUST_PROXY_BIN=src-rust\target\release\anti-proxy.exe"
+set "PID_DIR=%USERPROFILE%\.anti-api"
+set "ANTI_API_PID=%PID_DIR%\anti-api.pid"
+set "RUST_PID_FILE=%PID_DIR%\rust-proxy.pid"
+set "SETTINGS_FILE=%PID_DIR%\settings.json"
+set "AUTO_RESTART=false"
+set "ANTI_API_PATTERN=anti-api|src/main\.ts|bun(\.exe)?"
+set "RUST_PROXY_PATTERN=anti-proxy|rust-proxy"
 
-echo.
-echo   █████╗ ███╗   ██╗████████╗██╗         █████╗ ██████╗ ██╗
-echo  ██╔══██╗████╗  ██║╚══██╔══╝██║        ██╔══██╗██╔══██╗██║
-echo  ███████║██╔██╗ ██║   ██║   ██║ █████╗ ███████║██████╔╝██║
-echo  ██╔══██║██║╚██╗██║   ██║   ██║ ╚════╝ ██╔══██║██╔═══╝ ██║
-echo  ██║  ██║██║ ╚████║   ██║   ██║        ██║  ██║██║     ██║
-echo  ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝        ╚═╝  ╚═╝╚═╝     ╚═╝
+if not exist "%PID_DIR%" mkdir "%PID_DIR%" >nul 2>&1
+if exist "%USERPROFILE%\.bun\bin\bun.exe" set "PATH=%USERPROFILE%\.bun\bin;%PATH%"
+
+echo Anti-API
 echo.
 
-set PORT=8964
-set RUST_PROXY_PORT=8965
-
-:: 静默释放端口
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%PORT% 2^>nul') do (
-    taskkill /PID %%a /F >nul 2>&1
-)
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%RUST_PROXY_PORT% 2^>nul') do (
-    taskkill /PID %%a /F >nul 2>&1
-)
-:: 等待端口释放
-timeout /t 1 /nobreak >nul 2>&1
-
-if %UPDATE_MODE%==1 (
-    call :do_update
-    if errorlevel 1 goto :error
-    if %UPDATE_ONLY%==1 goto :end
-)
-
-:: 加载 bun 路径（如果已安装）
-if exist "%USERPROFILE%\.bun\bin\bun.exe" (
-    set "PATH=%USERPROFILE%\.bun\bin;%PATH%"
-)
-
-:: 确保 ngrok 可用（若未安装则自动下载）
-where ngrok >nul 2>&1
-if %errorlevel% neq 0 (
-    set "NGROK_DIR=%USERPROFILE%\.local\bin"
-    if not exist "%NGROK_DIR%" mkdir "%NGROK_DIR%" >nul 2>&1
-    set "ARCH=%PROCESSOR_ARCHITECTURE%"
-    set "NGROK_URL=https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip"
-    if /I "%ARCH%"=="ARM64" set "NGROK_URL=https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-arm64.zip"
-    powershell -ExecutionPolicy Bypass -Command ^
-        "$p='%NGROK_DIR%';" ^
-        "$u='%NGROK_URL%';" ^
-        "$z=Join-Path $env:TEMP 'ngrok.zip';" ^
-        "try { Invoke-WebRequest -Uri $u -OutFile $z -UseBasicParsing; Expand-Archive -Path $z -DestinationPath $p -Force } catch {}"
-    set "PATH=%NGROK_DIR%;%PATH%"
-)
-
-:: 检查 bun
-where bun >nul 2>&1
-if %errorlevel% neq 0 (
-    echo 安装 Bun...
-    echo (如果安装失败，请以管理员身份运行)
-    powershell -ExecutionPolicy Bypass -Command "irm bun.sh/install.ps1 | iex"
-    if %errorlevel% neq 0 (
-        echo [错误] Bun 安装失败，请以管理员身份运行或手动安装
-        goto :error
+set "DO_UPDATE=false"
+set "UPDATE_ONLY=false"
+for %%A in (%*) do (
+    if /I "%%~A"=="--update" set "DO_UPDATE=true"
+    if /I "%%~A"=="-u" set "DO_UPDATE=true"
+    if /I "%%~A"=="--update-only" (
+        set "DO_UPDATE=true"
+        set "UPDATE_ONLY=true"
     )
-    set "PATH=%USERPROFILE%\.bun\bin;%PATH%"
 )
 
-:: 再次检查 bun
+if "%DO_UPDATE%"=="true" call :update_release || goto :error
+if "%UPDATE_ONLY%"=="true" goto :eof
+
 where bun >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [错误] 找不到 Bun，请手动安装: https://bun.sh
+if errorlevel 1 (
+    echo Bun not found. Installing...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://bun.sh/install.ps1 | iex"
+    if errorlevel 1 goto :error
+    if exist "%USERPROFILE%\.bun\bin\bun.exe" set "PATH=%USERPROFILE%\.bun\bin;%PATH%"
+)
+
+where ngrok >nul 2>&1
+if errorlevel 1 (
+    echo ngrok not found. Downloading...
+    set "NGROK_ZIP=%TEMP%\ngrok-v3-stable-windows-amd64.zip"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri 'https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip' -OutFile '%NGROK_ZIP%'"
+    if errorlevel 1 goto :error
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%NGROK_ZIP%' -DestinationPath '%~dp0ngrok-temp' -Force"
+    if errorlevel 1 goto :error
+    move /Y "%~dp0ngrok-temp\ngrok.exe" "%~dp0ngrok.exe" >nul
+    rmdir /S /Q "%~dp0ngrok-temp" >nul 2>&1
+    del "%NGROK_ZIP%" >nul 2>&1
+)
+
+if exist "%SETTINGS_FILE%" (
+    for /f %%V in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $data = Get-Content '%SETTINGS_FILE%' -Raw | ConvertFrom-Json; if ($data.autoRestart) { 'true' } else { 'false' } } catch { 'false' }"') do set "AUTO_RESTART=%%V"
+)
+
+call :cleanup_existing_processes
+
+echo Building Rust proxy...
+bun x tsc >nul
+if errorlevel 1 goto :error
+cargo build --release --manifest-path src-rust/Cargo.toml
+if errorlevel 1 goto :error
+
+if not exist "%RUST_PROXY_BIN%" (
+    echo Rust proxy binary not found.
     goto :error
 )
 
-:: 安装依赖（静默）
-if not exist "node_modules" (
-    echo 正在安装依赖...
-    bun install --silent
+echo Starting Rust proxy...
+set "RUST_PID="
+for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$wd=[System.IO.Directory]::GetCurrentDirectory(); $p=Start-Process -FilePath '%RUST_PROXY_BIN%' -WorkingDirectory $wd -PassThru -WindowStyle Hidden; $p.Id"') do set "RUST_PID=%%P"
+if not defined RUST_PID (
+    echo Failed to start Rust proxy.
+    goto :error
 )
+>%RUST_PID_FILE% echo !RUST_PID!
 
-:: 启动 Rust Proxy（后台运行）
-set RUST_PROXY_BIN=rust-proxy\target\release\anti-proxy.exe
-if not exist "%RUST_PROXY_BIN%" (
-    where cargo >nul 2>&1
-    if %errorlevel% equ 0 (
-        cargo build --release --manifest-path rust-proxy\Cargo.toml >nul 2>&1
+echo Starting Anti-API on http://localhost:%PORT%
+echo.
+
+:api_loop
+call :run_api_once
+set "API_EXIT=!ERRORLEVEL!"
+if "!AUTO_RESTART!"=="true" (
+    if not "!API_EXIT!"=="0" if not "!API_EXIT!"=="130" if not "!API_EXIT!"=="143" (
+        echo Anti-API exited with code !API_EXIT!. Restarting in 2 seconds...
+        timeout /t 2 /nobreak >nul
+        goto :api_loop
     )
 )
-if exist "%RUST_PROXY_BIN%" (
-    start "" /B cmd /c "%RUST_PROXY_BIN%" >nul 2>&1
-    timeout /t 1 /nobreak >nul 2>&1
-)
 
-:: 启动 TypeScript 服务器
-bun run src/main.ts start
+goto :shutdown
 
-:: 清理 Rust Proxy
-taskkill /IM anti-proxy.exe /F >nul 2>&1
-
-goto :end
-
-:do_update
-set "API_URL=https://api.github.com/repos/ink1ing/anti-api/releases/latest"
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$ErrorActionPreference='Stop';" ^
-    "$r=Invoke-RestMethod -Uri '%API_URL%';" ^
-    "$asset=$r.assets | Where-Object { $_.name -match '^anti-api-v.*\\.zip$' } | Select-Object -First 1;" ^
-    "if($asset){ $url=$asset.browser_download_url; $digest=[string]$asset.digest } else { $url=$r.zipball_url; $digest='' };" ^
-    "if(-not $url){ throw 'no download url found' };" ^
-    "$tmp=Join-Path $env:TEMP 'anti-api-update';" ^
-    "Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue;" ^
-    "New-Item -ItemType Directory -Path $tmp | Out-Null;" ^
-    "$zip=Join-Path $tmp 'release.zip';" ^
-    "Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing;" ^
-    "if($digest -like 'sha256:*') { $expected=$digest.Substring(7).ToLowerInvariant(); $actual=(Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLowerInvariant(); if($actual -ne $expected){ throw 'sha256 mismatch' } };" ^
-    "Expand-Archive -Path $zip -DestinationPath $tmp -Force;" ^
-    "$dir=Get-ChildItem $tmp -Directory | Select-Object -First 1;" ^
-    "if(-not $dir){ throw 'unzip structure invalid' };" ^
-    "$src=$dir.FullName; $dst=(Get-Location).Path;" ^
-    "robocopy $src $dst /E /NFL /NDL /NJH /NJS /NP /XD data node_modules .git /XF .env >$null;" ^
-    "if($LASTEXITCODE -ge 8){ throw ('robocopy failed: ' + $LASTEXITCODE) };"
-if %errorlevel% neq 0 (
-    echo [错误] 自动更新失败
+:run_api_once
+set "API_PID="
+for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$wd=[System.IO.Directory]::GetCurrentDirectory(); $p=Start-Process -FilePath 'bun' -ArgumentList @('run','src/main.ts','start') -WorkingDirectory $wd -PassThru -NoNewWindow; $p.Id"') do set "API_PID=%%P"
+if not defined API_PID (
+    echo Failed to start Anti-API.
     exit /b 1
 )
-echo 已更新到最新版本
+>%ANTI_API_PID% echo !API_PID!
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Get-Process -Id !API_PID! -ErrorAction Stop; $p.WaitForExit(); exit $p.ExitCode"
+set "API_EXIT=!ERRORLEVEL!"
+del "%ANTI_API_PID%" >nul 2>&1
+exit /b !API_EXIT!
+
+:cleanup_existing_processes
+if exist "%ANTI_API_PID%" (
+    set /p OLD_ANTI_PID=<"%ANTI_API_PID%"
+    call :safe_kill_pid "!OLD_ANTI_PID!" "%ANTI_API_PATTERN%"
+    del "%ANTI_API_PID%" >nul 2>&1
+)
+if exist "%RUST_PID_FILE%" (
+    set /p OLD_RUST_PID=<"%RUST_PID_FILE%"
+    call :safe_kill_pid "!OLD_RUST_PID!" "%RUST_PROXY_PATTERN%"
+    del "%RUST_PID_FILE%" >nul 2>&1
+)
+call :safe_kill_by_port "%PORT%" "%ANTI_API_PATTERN%"
+call :safe_kill_by_port "%RUST_PROXY_PORT%" "%RUST_PROXY_PATTERN%"
+exit /b 0
+
+:safe_kill_by_port
+set "TARGET_PORT=%~1"
+set "TARGET_PATTERN=%~2"
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%TARGET_PORT% .*LISTENING"') do (
+    call :safe_kill_pid "%%P" "%TARGET_PATTERN%"
+)
+exit /b 0
+
+:safe_kill_pid
+set "TARGET_PID=%~1"
+set "TARGET_PATTERN=%~2"
+if not defined TARGET_PID exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$pid=%TARGET_PID%;" ^
+  "$pattern='%TARGET_PATTERN%';" ^
+  "$proc=Get-CimInstance Win32_Process -Filter \"ProcessId = $pid\" -ErrorAction SilentlyContinue;" ^
+  "if(-not $proc){ exit 0 }" ^
+  "$cmd=[string]$proc.CommandLine; $name=[string]$proc.Name;" ^
+  "if($cmd -match $pattern -or $name -match $pattern){ Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue }"
+exit /b 0
+
+:update_release
+set "TMPDIR=%TEMP%\anti-api-update"
+set "ZIP=%TMPDIR%\anti-api.zip"
+set "HASHFILE=%TMPDIR%\anti-api.zip.sha256"
+set "ZIPURL="
+set "HASHURL="
+set "EXPECTED="
+
+if exist "%TMPDIR%" rmdir /S /Q "%TMPDIR%" >nul 2>&1
+mkdir "%TMPDIR%" >nul 2>&1
+
+echo Checking latest release...
+for /f "usebackq delims=" %%L in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$r=Invoke-RestMethod -Headers @{ 'User-Agent'='anti-api-updater' } -Uri 'https://api.github.com/repos/ink1ing/anti-api/releases/latest'; foreach($a in $r.assets){ if($a.name -eq 'anti-api-portable.zip'){ $a.browser_download_url }; if($a.name -eq 'anti-api-portable.zip.sha256'){ $a.browser_download_url } }"`) do (
+    if not defined ZIPURL (
+        set "ZIPURL=%%L"
+    ) else if not defined HASHURL (
+        set "HASHURL=%%L"
+    )
+)
+
+if not defined ZIPURL (
+    echo Latest release zip asset not found.
+    exit /b 1
+)
+if not defined HASHURL (
+    echo Latest release checksum asset not found.
+    exit /b 1
+)
+
+echo Downloading release...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Headers @{ 'User-Agent'='anti-api-updater' } -Uri '%ZIPURL%' -OutFile '%ZIP%'"
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Headers @{ 'User-Agent'='anti-api-updater' } -Uri '%HASHURL%' -OutFile '%HASHFILE%'"
+if errorlevel 1 exit /b 1
+
+for /f "usebackq tokens=1" %%H in (`type "%HASHFILE%"`) do set "EXPECTED=%%H"
+if not defined EXPECTED (
+    echo Failed to read checksum.
+    exit /b 1
+)
+
+for /f %%H in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-FileHash '%ZIP%' -Algorithm SHA256).Hash.ToLowerInvariant()"') do set "ACTUAL=%%H"
+if /I not "%ACTUAL%"=="%EXPECTED%" (
+    echo Checksum mismatch.
+    echo Expected: %EXPECTED%
+    echo Actual:   %ACTUAL%
+    exit /b 1
+)
+
+echo Applying update...
+set "EXTRACT=%TMPDIR%\extract"
+mkdir "%EXTRACT%" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%ZIP%' -DestinationPath '%EXTRACT%' -Force"
+if errorlevel 1 exit /b 1
+
+set "SRC=%EXTRACT%\anti-api-portable"
+if not exist "%SRC%" set "SRC=%EXTRACT%"
+
+robocopy "%SRC%" "%CD%" /E /NFL /NDL /NJH /NJS /NC /NS >nul
+set "ROBO=%ERRORLEVEL%"
+if %ROBO% GEQ 8 (
+    echo Update copy failed.
+    exit /b 1
+)
+
+echo Update complete.
+exit /b 0
+
+:shutdown
+if exist "%RUST_PID_FILE%" (
+    set /p OLD_RUST_PID=<"%RUST_PID_FILE%"
+    call :safe_kill_pid "!OLD_RUST_PID!" "%RUST_PROXY_PATTERN%"
+    del "%RUST_PID_FILE%" >nul 2>&1
+)
+call :safe_kill_by_port "%RUST_PROXY_PORT%" "%RUST_PROXY_PATTERN%"
 exit /b 0
 
 :error
+call :shutdown
 echo.
-echo 按任意键退出...
-pause >nul
+echo Startup failed.
 exit /b 1
-
-:end
-exit /b 0

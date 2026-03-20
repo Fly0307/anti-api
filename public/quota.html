@@ -83,6 +83,10 @@
             color: var(--white-glow);
         }
 
+        .provider-logo--zed {
+            color: var(--white-glow);
+        }
+
         .provider-logo--copilot {
             color: #9ca3af;
         }
@@ -117,6 +121,12 @@
 
         /* Codex - 白色背景光晕 */
         .card-3d[data-provider="codex"].active .card-inner {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: var(--white-glow);
+            animation: codex-breathe 2s ease-in-out infinite;
+        }
+
+        .card-3d[data-provider="zed"].active .card-inner {
             background: rgba(255, 255, 255, 0.12);
             border-color: var(--white-glow);
             animation: codex-breathe 2s ease-in-out infinite;
@@ -246,6 +256,11 @@
         .copilot-bar {
             background: linear-gradient(90deg, #f85149, #ff938b);
             box-shadow: 0 0 12px rgba(248, 81, 73, 0.6);
+        }
+
+        .zed-bar {
+            background: linear-gradient(90deg, #e6e6e6, #bdbdbd);
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
         }
 
         .loading-screen {
@@ -737,6 +752,10 @@
                 <button class="w-full text-left px-4 py-3 rounded-lg border border-[#2f253f] hover:border-gray-500"
                     onclick="startProviderLogin('copilot')">
                     GitHub Copilot
+                </button>
+                <button class="w-full text-left px-4 py-3 rounded-lg border border-[#2f253f] hover:border-gray-500"
+                    onclick="startProviderLogin('zed')">
+                    Zed
                 </button>
             </div>
             <div id="add-account-status" class="mt-4 text-xs text-gray-400 hidden"></div>
@@ -1564,6 +1583,14 @@
                     </svg>
                 `;
             }
+            if (provider === 'zed') {
+                return `
+                    <svg class="provider-logo provider-logo--zed" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" fill-rule="evenodd" xmlns="http://www.w3.org/2000/svg" aria-label="Z.ai" role="img">
+                        <title>Z.ai</title>
+                        <path d="M12.105 2L9.927 4.953H.653L2.83 2h9.276zM23.254 19.048L21.078 22h-9.242l2.174-2.952h9.244zM24 2L9.264 22H0L14.736 2H24z"></path>
+                    </svg>
+                `;
+            }
             return `<span class="provider-logo--fallback">${provider}</span>`;
         }
 
@@ -1617,25 +1644,26 @@
             }
 
             const barHtml = bars.map(bar => {
-                const percentage = Math.max(0, Math.min(100, Math.round(bar.percentage || 0)));
-                return `
-                    <div class="space-y-1">
-                        <div class="flex items-center justify-between text-xs text-gray-400">
-                            <span class="uppercase tracking-widest">${bar.label}</span>
-                            <span class="font-bold text-gray-400">${percentage}%</span>
+                    const percentage = Math.max(0, Math.min(100, Math.round(bar.percentage || 0)));
+                    const zedSupported = provider === 'zed' && percentage > 0;
+                    return `
+                        <div class="space-y-1">
+                            <div class="flex items-center justify-between text-xs text-gray-400">
+                                <span class="uppercase tracking-widest">${provider === 'zed' ? 'all models' : bar.label}</span>
+                                <span class="font-bold text-gray-400">${provider === 'zed' ? (zedSupported ? 'supported' : 'unsupported') : `${percentage}%`}</span>
+                            </div>
+                            <div class="h-2 bg-gray-900 rounded-full overflow-hidden">
+                                <div class="progress-bar h-full rounded-full transition-all ${provider}-bar"
+                                     style="width: ${percentage}%;"></div>
+                            </div>
+                            <div class="text-[10px] text-gray-500">${bar.resetTime ? formatResetTime(bar.resetTime) : '—'}</div>
                         </div>
-                        <div class="h-2 bg-gray-900 rounded-full overflow-hidden">
-                            <div class="progress-bar h-full rounded-full transition-all ${provider}-bar"
-                                 style="width: ${percentage}%;"></div>
-                        </div>
-                        <div class="text-[10px] text-gray-500">${bar.resetTime ? formatResetTime(bar.resetTime) : '—'}</div>
-                    </div>
-                `;
-            }).join('');
+                    `;
+                }).join('');
 
             // Apply privacy masking based on provider
             const displayName = account.displayName || account.accountId;
-            const maskedName = provider === 'copilot' ? maskUsername(displayName) : maskEmail(displayName);
+            const maskedName = provider === 'copilot' || provider === 'zed' ? maskUsername(displayName) : maskEmail(displayName);
             const providerLogo = getProviderLogo(provider, cardId);
 
             return `
@@ -1677,7 +1705,7 @@
 
         function sortQuotaAccounts(accounts) {
             if (!window._optimizeQuotaSort) return accounts;
-            const providerOrder = ['antigravity', 'codex', 'copilot'];
+            const providerOrder = ['antigravity', 'codex', 'copilot', 'zed'];
             const sorted = [];
             const unknown = [];
 
@@ -1687,6 +1715,7 @@
                     if (provider === 'antigravity') return getQuotaBarInfo(acc, 'claude_gpt', 'claude&gpt');
                     if (provider === 'codex') return getQuotaBarInfo(acc, 'session', '5h');
                     if (provider === 'copilot') return getQuotaBarInfo(acc, 'premium', 'premium');
+                    if (provider === 'zed') return getQuotaBarInfo(acc, 'hosted', 'hosted');
                     return { percent: 0, resetTime: null };
                 };
                 group.sort((a, b) => {
@@ -2004,6 +2033,9 @@
                         const first = (data.accounts && data.accounts[0]) || {};
                         setAddAccountStatus(`Imported Codex: ${first.email || first.id || 'Codex'}`);
                     }
+                    closeAddAccountModal();
+                } else if (provider === 'zed') {
+                    setAddAccountStatus(`Connected: ${data.account?.label || data.account?.login || 'Zed'}`);
                     closeAddAccountModal();
                 } else {
                     setAddAccountStatus(`Connected: ${data.email || data.id || provider}`);

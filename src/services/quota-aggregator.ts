@@ -10,6 +10,7 @@ import { accountManager } from "~/services/antigravity/account-manager"
 import type { ProviderAccount } from "~/services/auth/types"
 import { UpstreamError } from "~/lib/error"
 import { getDataDir } from "~/lib/data-dir"
+import { fetchZedAccountOverview } from "~/services/zed/chat"
 
 type ModelInfo = AntigravityModelInfo
 
@@ -21,14 +22,14 @@ type AccountBar = {
 }
 
 export type AccountQuotaView = {
-    provider: "antigravity" | "codex" | "copilot"
+    provider: "antigravity" | "codex" | "copilot" | "zed"
     accountId: string
     displayName: string
     bars: AccountBar[]
 }
 
 type QuotaCacheEntry = {
-    provider: "antigravity" | "codex" | "copilot"
+    provider: "antigravity" | "codex" | "copilot" | "zed"
     accountId: string
     displayName: string
     bars: AccountBar[]
@@ -119,6 +120,10 @@ function defaultCopilotBars(): AccountBar[] {
     return [{ key: "premium", label: "premium", percentage: 0 }]
 }
 
+function defaultZedBars(): AccountBar[] {
+    return [{ key: "hosted", label: "hosted", percentage: 0 }]
+}
+
 function buildCachedViews(provider: QuotaCacheEntry["provider"], accounts: ProviderAccount[]): AccountQuotaView[] {
     return accounts.map(account => {
         const displayName = account.email || account.login || account.id
@@ -128,7 +133,9 @@ function buildCachedViews(provider: QuotaCacheEntry["provider"], accounts: Provi
                 ? buildAntigravityBars({})
                 : provider === "codex"
                     ? defaultCodexBars()
-                    : defaultCopilotBars()
+                    : provider === "copilot"
+                        ? defaultCopilotBars()
+                        : defaultZedBars()
         )
         return {
             provider,
@@ -149,8 +156,9 @@ export async function getAggregatedQuota(): Promise<{
     const antigravityAccounts = authStore.listAccounts("antigravity")
     const codexAccounts = authStore.listAccounts("codex")
     const copilotAccounts = authStore.listAccounts("copilot")
+    const zedAccounts = authStore.listAccounts("zed")
 
-    const [antigravity, codex, copilot] = await Promise.all([
+    const [antigravity, codex, copilot, zed] = await Promise.all([
         withTimeout(
             fetchAntigravityQuotas(antigravityAccounts),
             PROVIDER_FETCH_TIMEOUT_MS,
@@ -169,12 +177,18 @@ export async function getAggregatedQuota(): Promise<{
             () => buildCachedViews("copilot", copilotAccounts),
             "Copilot",
         ),
+        withTimeout(
+            fetchZedQuotas(zedAccounts),
+            PROVIDER_FETCH_TIMEOUT_MS,
+            () => buildCachedViews("zed", zedAccounts),
+            "Zed",
+        ),
     ])
     saveQuotaCache()
 
     return {
         timestamp: new Date().toISOString(),
-        accounts: [...antigravity, ...codex, ...copilot],
+        accounts: [...antigravity, ...codex, ...copilot, ...zed],
     }
 }
 
@@ -479,6 +493,57 @@ async function fetchCopilotQuotas(accounts: ProviderAccount[]): Promise<AccountQ
         }
     })
     return Promise.all(promises)
+}
+
+async function fetchZedQuotas(accounts: ProviderAccount[]): Promise<AccountQuotaView[]> {
+    const promises = accounts.map(async (account) => {
+        try {
+            const overview = await fetchZedAccountOverview(account)
+            const bars = [buildZedHostedBar(overview)]
+            updateQuotaCache({
+                provider: "zed",
+                accountId: account.id,
+                displayName: account.label || account.login || account.id,
+                bars,
+                updatedAt: new Date().toISOString(),
+            })
+            return {
+                provider: "zed" as const,
+                accountId: account.id,
+                displayName: account.label || account.login || account.id,
+                bars,
+            }
+        } catch (error) {
+            consola.warn("Zed quota fetch failed:", error)
+            const cachedBars = getCachedBars("zed", account.id)
+            if (cachedBars) {
+                return {
+                    provider: "zed" as const,
+                    accountId: account.id,
+                    displayName: account.label || account.login || account.id,
+                    bars: cachedBars,
+                }
+            }
+            return {
+                provider: "zed" as const,
+                accountId: account.id,
+                displayName: account.label || account.login || account.id,
+                bars: defaultZedBars(),
+            }
+        }
+    })
+    return Promise.all(promises)
+}
+
+function buildZedHostedBar(data: Awaited<ReturnType<typeof fetchZedAccountOverview>>): AccountBar {
+    const plan = data.plan?.plan_v3 || ""
+    const entitledPlans = new Set(["zed_pro", "zed_pro_trial", "zed_student"])
+    return {
+        key: "hosted",
+        label: "hosted",
+        percentage: entitledPlans.has(plan) ? 100 : 0,
+        resetTime: data.plan?.subscription_period?.ended_at || undefined,
+    }
 }
 
 async function fetchCopilotPremium(account: ProviderAccount): Promise<AccountBar> {

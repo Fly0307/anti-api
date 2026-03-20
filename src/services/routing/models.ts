@@ -41,12 +41,16 @@ const COPILOT_STATIC_MODELS: ProviderModelOption[] = [
     { id: "gpt-4.1-mini", label: "Copilot - GPT-4.1 Mini" },
 ]
 
+const ZED_STATIC_MODELS: ProviderModelOption[] = []
+
 let dynamicCopilotModels: ProviderModelOption[] = []
 let dynamicCodexModels: ProviderModelOption[] = []
 let dynamicAntigravityModels: ProviderModelOption[] = []
+let dynamicZedModels: ProviderModelOption[] = []
 const dynamicCopilotModelsByAccount = new Map<string, ProviderModelOption[]>()
 const dynamicCodexModelsByAccount = new Map<string, ProviderModelOption[]>()
 const dynamicAntigravityModelsByAccount = new Map<string, ProviderModelOption[]>()
+const dynamicZedModelsByAccount = new Map<string, ProviderModelOption[]>()
 
 function sanitizeModelOptions(models: ProviderModelOption[], prefix: string): ProviderModelOption[] {
     const deduped = new Map<string, ProviderModelOption>()
@@ -151,6 +155,29 @@ export function clearAllDynamicAntigravityModelsByAccount(): void {
     dynamicAntigravityModelsByAccount.clear()
 }
 
+export function setDynamicZedModels(models: ProviderModelOption[]): void {
+    dynamicZedModels = sanitizeModelOptions(models, "Zed")
+}
+
+export function clearDynamicZedModels(): void {
+    dynamicZedModels = []
+    dynamicZedModelsByAccount.clear()
+}
+
+export function setDynamicZedModelsForAccount(accountId: string, models: ProviderModelOption[]): void {
+    const id = accountId?.trim()
+    if (!id) return
+    dynamicZedModelsByAccount.set(id, sanitizeModelOptions(models, "Zed"))
+}
+
+export function clearDynamicZedModelsForAccount(accountId: string): void {
+    dynamicZedModelsByAccount.delete(accountId)
+}
+
+export function clearAllDynamicZedModelsByAccount(): void {
+    dynamicZedModelsByAccount.clear()
+}
+
 export function getProviderModels(provider: AuthProvider): ProviderModelOption[] {
     if (provider === "antigravity") {
         const staticModels = AVAILABLE_MODELS.map(model => ({
@@ -183,6 +210,14 @@ export function getProviderModels(provider: AuthProvider): ProviderModelOption[]
         return CODEX_MODELS.filter(model => !CODEX_HIDDEN_MODELS.has(model.id))
     }
 
+    if (provider === "zed") {
+        return mergeModelOptions(
+            flattenDynamicModelsByAccount(dynamicZedModelsByAccount),
+            dynamicZedModels,
+            ZED_STATIC_MODELS
+        )
+    }
+
     return []
 }
 
@@ -207,6 +242,13 @@ export function getProviderModelsForAccount(provider: AuthProvider, accountId: s
         if (dynamic && dynamic.length > 0) {
             const staticModels = AVAILABLE_MODELS.map(model => ({ id: model.id, label: model.name }))
             return mergeModelOptions(dynamic, staticModels)
+        }
+        return getProviderModels(provider)
+    }
+    if (provider === "zed") {
+        const dynamic = dynamicZedModelsByAccount.get(accountId)
+        if (dynamic && dynamic.length > 0) {
+            return mergeModelOptions(dynamic, ZED_STATIC_MODELS)
         }
         return getProviderModels(provider)
     }

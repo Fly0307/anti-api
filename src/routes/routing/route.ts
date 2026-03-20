@@ -4,16 +4,20 @@ import { authStore } from "~/services/auth/store"
 import { listCopilotModelsForAccount } from "~/services/copilot/chat"
 import { listCodexModelsForAccount } from "~/services/codex/chat"
 import { fetchAntigravityModels } from "~/services/antigravity/quota-fetch"
+import { listZedModelsForAccount } from "~/services/zed/chat"
 import {
     clearAllDynamicCodexModelsByAccount,
     clearAllDynamicCopilotModelsByAccount,
     clearAllDynamicAntigravityModelsByAccount,
+    clearAllDynamicZedModelsByAccount,
     clearDynamicAntigravityModels,
     clearDynamicAntigravityModelsForAccount,
     clearDynamicCodexModels,
     clearDynamicCodexModelsForAccount,
     clearDynamicCopilotModels,
     clearDynamicCopilotModelsForAccount,
+    clearDynamicZedModels,
+    clearDynamicZedModelsForAccount,
     getProviderModels,
     getProviderModelsForAccount,
     setDynamicAntigravityModels,
@@ -22,6 +26,8 @@ import {
     setDynamicCodexModelsForAccount,
     setDynamicCopilotModels,
     setDynamicCopilotModelsForAccount,
+    setDynamicZedModels,
+    setDynamicZedModelsForAccount,
     type ProviderModelOption,
 } from "~/services/routing/models"
 import { loadRoutingConfig, saveRoutingConfig, setActiveFlow, type RoutingEntry, type RoutingFlow, type AccountRoutingConfig } from "~/services/routing/config"
@@ -40,6 +46,8 @@ const CODEX_SYNC_TTL_MS = 60_000
 const CODEX_SYNC_TIMEOUT_MS = 800
 const ANTIGRAVITY_SYNC_TTL_MS = 60_000
 const ANTIGRAVITY_SYNC_TIMEOUT_MS = 800
+const ZED_SYNC_TTL_MS = 60_000
+const ZED_SYNC_TIMEOUT_MS = 800
 const QUOTA_TIMEOUT_MS = 1200
 const QUOTA_TTL_MS = 15_000
 
@@ -49,6 +57,8 @@ let lastCodexSyncAt = 0
 let codexSyncInFlight: Promise<void> | null = null
 let lastAntigravitySyncAt = 0
 let antigravitySyncInFlight: Promise<void> | null = null
+let lastZedSyncAt = 0
+let zedSyncInFlight: Promise<void> | null = null
 let lastQuotaSnapshot: Awaited<ReturnType<typeof getAggregatedQuota>> | null = null
 let lastQuotaAt = 0
 let quotaInFlight: Promise<Awaited<ReturnType<typeof getAggregatedQuota>> | null> | null = null
@@ -68,7 +78,7 @@ async function settleWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Pro
     return result as { ok: boolean; value?: T; error?: Error; timedOut?: boolean }
 }
 
-function resolveAccountLabel(provider: "antigravity" | "codex" | "copilot", accountId: string, fallback?: string): string {
+function resolveAccountLabel(provider: "antigravity" | "codex" | "copilot" | "zed", accountId: string, fallback?: string): string {
     if (accountId === "auto") return "auto"
     const account = authStore.getAccount(provider, accountId)
     return account?.label || account?.email || account?.login || fallback || accountId
@@ -98,8 +108,13 @@ function syncAccountRoutingLabels(accountRouting?: AccountRoutingConfig): Accoun
     }
 }
 
-function listAccountsInOrder(provider: "antigravity" | "codex" | "copilot"): ProviderAccount[] {
-    const accounts = authStore.listAccounts(provider)
+function listAccountsInOrder(provider: "antigravity" | "codex" | "copilot" | "zed"): ProviderAccount[] {
+    let accounts: ProviderAccount[] = []
+    try {
+        accounts = authStore.listAccounts(provider) || []
+    } catch {
+        accounts = []
+    }
     return accounts.sort((a, b) => {
         const aTime = a.createdAt || ""
         const bTime = b.createdAt || ""
@@ -156,6 +171,7 @@ routingRouter.get("/config", async (c) => {
     const antigravityAccounts = listAccountsInOrder("antigravity")
     const codexAccounts = listAccountsInOrder("codex")
     const copilotAccounts = listAccountsInOrder("copilot")
+    const zedAccounts = listAccountsInOrder("zed")
 
     const now = Date.now()
     if (copilotAccounts.length === 0) {
@@ -294,6 +310,53 @@ routingRouter.get("/config", async (c) => {
         }
     }
 
+    if (zedAccounts.length === 0) {
+        clearDynamicZedModels()
+        clearAllDynamicZedModelsByAccount()
+        lastZedSyncAt = 0
+    } else if (now - lastZedSyncAt > ZED_SYNC_TTL_MS) {
+        if (!zedSyncInFlight) {
+            lastZedSyncAt = now
+            zedSyncInFlight = (async () => {
+                const mergedModels = new Map<string, ProviderModelOption>()
+                try {
+                    for (const account of zedAccounts) {
+                        try {
+                            const remoteModels = await listZedModelsForAccount(account)
+                            const dynamicModels = normalizeRemoteModels("Zed", remoteModels.map(model => ({
+                                id: model.id,
+                                name: model.display_name || model.id,
+                            })))
+                            if (dynamicModels.length === 0) {
+                                clearDynamicZedModelsForAccount(account.id)
+                                continue
+                            }
+                            setDynamicZedModelsForAccount(account.id, dynamicModels)
+                            for (const model of dynamicModels) {
+                                if (!mergedModels.has(model.id)) mergedModels.set(model.id, model)
+                            }
+                            consola.debug(`[routing] Zed models synced (${dynamicModels.length}) from ${account.id}`)
+                        } catch (error) {
+                            const message = error instanceof Error ? error.message : String(error)
+                            clearDynamicZedModelsForAccount(account.id)
+                            consola.debug(`[routing] Zed models sync skipped ${account.id}: ${message}`)
+                        }
+                    }
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error)
+                    consola.warn(`[routing] Zed models sync failed: ${message}`)
+                } finally {
+                    if (mergedModels.size > 0) {
+                        setDynamicZedModels(Array.from(mergedModels.values()))
+                    } else {
+                        clearDynamicZedModels()
+                    }
+                    zedSyncInFlight = null
+                }
+            })()
+        }
+    }
+
     const syncWaiters: Promise<unknown>[] = []
     if (copilotSyncInFlight) {
         syncWaiters.push(settleWithTimeout(copilotSyncInFlight, COPILOT_SYNC_TIMEOUT_MS))
@@ -304,6 +367,9 @@ routingRouter.get("/config", async (c) => {
     if (antigravitySyncInFlight) {
         syncWaiters.push(settleWithTimeout(antigravitySyncInFlight, ANTIGRAVITY_SYNC_TIMEOUT_MS))
     }
+    if (zedSyncInFlight) {
+        syncWaiters.push(settleWithTimeout(zedSyncInFlight, ZED_SYNC_TIMEOUT_MS))
+    }
     if (syncWaiters.length > 0) {
         await Promise.all(syncWaiters)
     }
@@ -312,18 +378,21 @@ routingRouter.get("/config", async (c) => {
         antigravity: antigravityAccounts.map(toSummary),
         codex: codexAccounts.map(toSummary),
         copilot: copilotAccounts.map(toSummary),
+        zed: zedAccounts.map(toSummary),
     }
 
     const models = {
         antigravity: getProviderModels("antigravity"),
         codex: getProviderModels("codex"),
         copilot: getProviderModels("copilot"),
+        zed: getProviderModels("zed"),
     }
 
     const accountModels = {
         antigravity: Object.fromEntries(antigravityAccounts.map(account => [account.id, getProviderModelsForAccount("antigravity", account.id)])),
         codex: Object.fromEntries(codexAccounts.map(account => [account.id, getProviderModelsForAccount("codex", account.id)])),
         copilot: Object.fromEntries(copilotAccounts.map(account => [account.id, getProviderModelsForAccount("copilot", account.id)])),
+        zed: Object.fromEntries(zedAccounts.map(account => [account.id, getProviderModelsForAccount("zed", account.id)])),
     }
 
     // Get quota data for displaying on model blocks
@@ -423,6 +492,7 @@ routingRouter.post("/cleanup", async (c) => {
     const validAntigravity = new Set(authStore.listSummaries("antigravity").map(a => a.id || a.email))
     const validCodex = new Set(authStore.listSummaries("codex").map(a => a.id || a.email))
     const validCopilot = new Set(authStore.listSummaries("copilot").map(a => a.id || a.email))
+    const validZed = new Set(authStore.listSummaries("zed").map(a => a.id || a.email))
 
     let removedCount = 0
 
@@ -437,6 +507,8 @@ routingRouter.post("/cleanup", async (c) => {
                 isValid = validCodex.has(entry.accountId)
             } else if (entry.provider === "copilot") {
                 isValid = validCopilot.has(entry.accountId)
+            } else if (entry.provider === "zed") {
+                isValid = validZed.has(entry.accountId)
             }
             if (!isValid) {
                 removedCount++
@@ -458,6 +530,8 @@ routingRouter.post("/cleanup", async (c) => {
                     isValid = validCodex.has(entry.accountId)
                 } else if (entry.provider === "copilot") {
                     isValid = validCopilot.has(entry.accountId)
+                } else if (entry.provider === "zed") {
+                    isValid = validZed.has(entry.accountId)
                 }
                 if (!isValid) {
                     removedCount++

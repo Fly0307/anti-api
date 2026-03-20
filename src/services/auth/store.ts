@@ -18,6 +18,8 @@ interface StoredAuthFile {
     refresh_token?: string
     expires_at?: number
     project_id?: string
+    organization_id?: string
+    server_url?: string
     created_at?: string
     updated_at?: string
 }
@@ -50,6 +52,7 @@ function accountKey(provider: AuthProvider, id: string): string {
 
 function providerToStoredType(provider: AuthProvider): string {
     if (provider === "copilot") return "github-copilot"
+    if (provider === "zed") return "zed"
     return provider
 }
 
@@ -57,6 +60,7 @@ function storedTypeToProvider(type: string): AuthProvider | null {
     if (type === "github-copilot" || type === "copilot") return "copilot"
     if (type === "antigravity") return "antigravity"
     if (type === "codex") return "codex"
+    if (type === "zed") return "zed"
     return null
 }
 
@@ -95,6 +99,8 @@ function loadAccountFromFile(path: string): ProviderAccount | null {
             refreshToken: raw.refresh_token,
             expiresAt: raw.expires_at,
             projectId: raw.project_id,
+            organizationId: raw.organization_id,
+            serverUrl: raw.server_url,
             authSource: raw.auth_source as ProviderAccount["authSource"],
             createdAt: raw.created_at,
             updatedAt: raw.updated_at,
@@ -123,6 +129,8 @@ function writeAccountFile(account: ProviderAccount): void {
         refresh_token: account.refreshToken,
         expires_at: account.expiresAt,
         project_id: account.projectId,
+        organization_id: account.organizationId,
+        server_url: account.serverUrl,
         created_at: account.createdAt || now,
         updated_at: now,
     }
