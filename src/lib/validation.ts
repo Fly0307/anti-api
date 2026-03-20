@@ -91,6 +91,58 @@ export function validateChatRequest(payload: any): ValidationResult {
     return { valid: true }
 }
 
+export function validateResponsesRequest(payload: any): ValidationResult {
+    if (!payload || typeof payload !== "object") {
+        return { valid: false, error: "Request body must be a JSON object" }
+    }
+
+    if (!payload.model || typeof payload.model !== "string") {
+        return { valid: false, error: "Model is required and must be a string" }
+    }
+    if (payload.model.length > MAX_MODEL_NAME_LENGTH) {
+        return { valid: false, error: `Model name too long (max ${MAX_MODEL_NAME_LENGTH} characters)` }
+    }
+
+    const input = payload.input
+    const inputIsValid =
+        typeof input === "string" ||
+        (Array.isArray(input) && input.length > 0) ||
+        (input && typeof input === "object")
+    if (!inputIsValid) {
+        return { valid: false, error: "input is required and must be a string, object, or non-empty array" }
+    }
+
+    if (payload.max_output_tokens !== undefined && payload.max_output_tokens !== null) {
+        if (typeof payload.max_output_tokens !== "number" || payload.max_output_tokens <= 0) {
+            return { valid: false, error: "max_output_tokens must be a positive number" }
+        }
+        if (payload.max_output_tokens > MAX_TOKENS_LIMIT) {
+            return { valid: false, error: `max_output_tokens too large (max ${MAX_TOKENS_LIMIT})` }
+        }
+    }
+
+    if (payload.temperature !== undefined && payload.temperature !== null) {
+        if (typeof payload.temperature !== "number" || payload.temperature < 0 || payload.temperature > 2) {
+            return { valid: false, error: "temperature must be a number between 0 and 2" }
+        }
+    }
+
+    if (payload.stream !== undefined && typeof payload.stream !== "boolean") {
+        return { valid: false, error: "stream must be a boolean" }
+    }
+
+    if (payload.tools !== undefined && payload.tools !== null) {
+        if (!Array.isArray(payload.tools)) {
+            return { valid: false, error: "tools must be an array" }
+        }
+        if (payload.tools.length > MAX_TOOLS_PER_REQUEST) {
+            return { valid: false, error: `Too many tools (max ${MAX_TOOLS_PER_REQUEST})` }
+        }
+    }
+
+    return { valid: true }
+}
+
 /**
  * Validate Anthropic messages request body
  */

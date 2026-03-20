@@ -10,6 +10,7 @@ import consola from "consola"
 
 import { messageRoutes } from "./routes/messages/route"
 import { openaiRoutes } from "./routes/openai/route"
+import { openaiResponsesRoutes } from "./routes/openai/responses-route"
 import { authRouter } from "./routes/auth/route"
 import { remoteRouter } from "./routes/remote/route"
 import { routingRouter } from "./routes/routing/route"
@@ -152,6 +153,8 @@ server.post("/usage/reset", (c) => {
 
 // OpenAI 兼容端点
 server.route("/v1/chat/completions", openaiRoutes)
+server.route("/responses", openaiResponsesRoutes)
+server.route("/v1/responses", openaiResponsesRoutes)
 
 // Anthropic兼容端点
 server.route("/v1/messages", messageRoutes)
@@ -362,14 +365,6 @@ server.post("/embeddings", (c) => c.json({
 }, 501))
 server.post("/v1/embeddings", (c) => c.json({
     error: { type: "not_supported", message: "Embeddings not supported" }
-}, 501))
-
-// Responses 端点 - 占位（OpenAI Responses API）
-server.post("/responses", (c) => c.json({
-    error: { type: "not_supported", message: "Responses API not supported" }
-}, 501))
-server.post("/v1/responses", (c) => c.json({
-    error: { type: "not_supported", message: "Responses API not supported" }
 }, 501))
 
 // 健康检查

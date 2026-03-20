@@ -16,6 +16,84 @@ export interface OpenAIChatCompletionRequest {
     }
 }
 
+export type OpenAIResponsesToolChoice =
+    | "auto"
+    | "none"
+    | "required"
+    | {
+        type: "function"
+        name: string
+    }
+
+export interface OpenAIResponsesFunctionTool {
+    type: "function"
+    name: string
+    description?: string
+    parameters?: Record<string, any>
+    strict?: boolean
+}
+
+export type OpenAIResponsesInputContent =
+    | {
+        type: "input_text" | "output_text" | "text"
+        text: string
+    }
+    | {
+        type: "input_image"
+        image_url?: string
+        file_id?: string
+        detail?: "low" | "high" | "auto"
+    }
+    | {
+        type: "input_file"
+        file_id?: string
+        file_url?: string
+        file_data?: string
+        filename?: string
+    }
+
+export type OpenAIResponsesInputItem =
+    | string
+    | {
+        type?: "message"
+        role: "system" | "user" | "assistant" | "developer"
+        content: string | OpenAIResponsesInputContent[]
+        phase?: "commentary" | "final_answer"
+    }
+    | {
+        type: "function_call"
+        id?: string
+        call_id: string
+        name: string
+        arguments: string
+        status?: "in_progress" | "completed" | "incomplete"
+    }
+    | {
+        type: "function_call_output"
+        id?: string
+        call_id: string
+        output: string | OpenAIResponsesInputContent[]
+        status?: "in_progress" | "completed" | "incomplete"
+    }
+
+export interface OpenAIResponsesRequest {
+    model: string
+    input: string | OpenAIResponsesInputItem[] | OpenAIResponsesInputItem
+    stream?: boolean
+    max_output_tokens?: number | null
+    temperature?: number | null
+    top_p?: number
+    tools?: OpenAIResponsesFunctionTool[] | null
+    tool_choice?: OpenAIResponsesToolChoice
+    reasoning?: {
+        effort?: "low" | "medium" | "high"
+    }
+    previous_response_id?: string
+    store?: boolean
+    user?: string
+    metadata?: Record<string, string>
+}
+
 export interface OpenAIMessage {
     role: "system" | "user" | "assistant" | "tool" | "developer"
     content: string | null
